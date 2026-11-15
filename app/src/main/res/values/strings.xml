@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NotCustom</string>
+    <string name="tile_name">NotCustom</string>
+    <string name="accessibility_description">Powers NotCustom Home gestures: double-tap to turn off the screen, swipe down on home to open notifications. No screen content is read.</string>
+</resources>
