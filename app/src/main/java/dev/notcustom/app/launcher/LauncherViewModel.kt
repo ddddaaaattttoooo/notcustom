@@ -3,11 +3,13 @@ package dev.notcustom.app.launcher
 import android.app.Activity
 import android.app.ActivityOptions
 import android.app.Application
+import android.app.admin.DevicePolicyManager
 import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
 import android.graphics.Rect
 import android.net.Uri
@@ -15,6 +17,7 @@ import android.os.Process
 import android.provider.Settings
 import android.view.View
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.core.content.FileProvider
 import dev.notcustom.app.R
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -28,6 +31,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.Collator
 import kotlin.math.roundToInt
 
@@ -51,10 +59,24 @@ data class LauncherState(
     val homeMenuOpen: Boolean = false,
     val widgets: List<Int> = emptyList(),
     val widgetPickerOpen: Boolean = false,
+    val widgetPickerPackage: String? = null,
     val accessibilityEnabled: Boolean = false,
     val returning: ReturnTransition? = null,
+    val update: UpdateState = UpdateState(),
     val message: String? = null
 )
+
+data class UpdateState(
+    val checking: Boolean = false,
+    val downloading: Boolean = false,
+    val checked: Boolean = false,
+    val available: Boolean = false,
+    val latest: String? = null,
+    val apkUrl: String? = null,
+    val message: String? = null
+)
+
+private data class ReleaseUpdate(val version: String, val apkUrl: String)
 
 data class ReturnTransition(
     val app: LauncherApp,
@@ -83,6 +105,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     init {
         refreshAccessibility()
         reload()
+        viewModelScope.launch {
+            delay(4000)
+            checkForUpdates()
+        }
     }
 
     fun reload() {
@@ -727,6 +753,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun uninstall(app: LauncherApp) {
+        if (!canUninstall(app)) {
+            appInfo(app)
+            return
+        }
         val intent = Intent(
             Intent.ACTION_DELETE,
             Uri.parse("package:${app.packageName}")
@@ -734,6 +764,198 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         runCatching { getApplication<Application>().startActivity(intent) }
         dismissMenu()
     }
+
+    fun canUninstall(app: LauncherApp): Boolean {
+        val context = getApplication<Application>()
+        val info = runCatching {
+            context.packageManager.getApplicationInfo(app.packageName, 0)
+        }.getOrNull() ?: return false
+        if ((info.flags and ApplicationInfo.FLAG_SYSTEM) != 0) return false
+        if ((info.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0) return false
+        val dpm = context.getSystemService(DevicePolicyManager::class.java)
+        if (dpm?.activeAdmins?.any { it.packageName == app.packageName } == true) return false
+        return true
+    }
+
+    fun checkForUpdates(force: Boolean = false) {
+        val update = _state.value.update
+        if (update.checking || update.downloading) return
+        if (update.checked && !force) return
+        _state.update { it.copy(update = it.update.copy(checking = true, message = null)) }
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            val current = installedVersion(context)
+            val release = withContext(Dispatchers.IO) { fetchLatestRelease() }
+            if (release == null) {
+                _state.update {
+                    it.copy(
+                        update = it.update.copy(
+                            checking = false,
+                            checked = true,
+                            message = "Could not check GitHub or GitLab for updates."
+                        )
+                    )
+                }
+                return@launch
+            }
+            val latest = release.version.removePrefix("v").removePrefix("V")
+            val newer = isNewerVersion(latest, current)
+            _state.update {
+                it.copy(
+                    update = UpdateState(
+                        checking = false,
+                        checked = true,
+                        available = newer,
+                        latest = latest,
+                        apkUrl = release.apkUrl,
+                        message = if (newer) null else "NotCustom is up to date."
+                    )
+                )
+            }
+        }
+    }
+
+    fun installUpdate() {
+        val update = _state.value.update
+        val url = update.apkUrl
+        if (url.isNullOrBlank() || update.downloading) return
+        _state.update { it.copy(update = it.update.copy(downloading = true, message = null)) }
+        viewModelScope.launch {
+            val file = withContext(Dispatchers.IO) { downloadApk(url) }
+            val context = getApplication<Application>()
+            if (file == null) {
+                _state.update {
+                    it.copy(
+                        update = it.update.copy(
+                            downloading = false,
+                            message = "Update download failed. Try again."
+                        )
+                    )
+                }
+                return@launch
+            }
+            val launched = runCatching {
+                val uri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.updates",
+                    file
+                )
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(uri, "application/vnd.android.package-archive")
+                        .addFlags(
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                Intent.FLAG_ACTIVITY_NEW_TASK
+                        )
+                )
+            }.isSuccess
+            _state.update {
+                it.copy(
+                    update = it.update.copy(
+                        downloading = false,
+                        message = if (launched) {
+                            "Follow the installer prompt to update."
+                        } else {
+                            "Allow NotCustom to install unknown apps, then try again."
+                        }
+                    )
+                )
+            }
+        }
+    }
+
+    private fun installedVersion(context: Application): String = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+    }.getOrNull() ?: "0"
+
+    private fun isNewerVersion(latest: String, current: String): Boolean {
+        val a = versionParts(latest)
+        val b = versionParts(current)
+        for (i in 0 until 3) {
+            val x = a.getOrElse(i) { 0 }
+            val y = b.getOrElse(i) { 0 }
+            if (x != y) return x > y
+        }
+        return false
+    }
+
+    private fun versionParts(value: String): List<Int> =
+        Regex("\\d+").findAll(value).map { it.value.toIntOrNull() ?: 0 }.take(3).toList()
+
+    private fun fetchLatestRelease(): ReleaseUpdate? {
+        fetchGithubRelease()?.let { return it }
+        return fetchGitlabRelease()
+    }
+
+    private fun fetchGithubRelease(): ReleaseUpdate? = runCatching {
+        val releases = JSONArray(
+            httpGet("https://api.github.com/repos/ddddaaaattttoooo/notcustom/releases?per_page=10")
+        )
+        (0 until releases.length()).asSequence()
+            .map { releases.getJSONObject(it) }
+            .filter { !it.optBoolean("draft") }
+            .mapNotNull { release ->
+                val tag = release.optString("tag_name").trim()
+                val assets = release.optJSONArray("assets") ?: JSONArray()
+                val apk = (0 until assets.length())
+                    .map { assets.getJSONObject(it) }
+                    .firstOrNull { it.optString("name").endsWith(".apk", ignoreCase = true) }
+                val url = apk?.optString("browser_download_url").orEmpty()
+                if (tag.isBlank() || url.isBlank()) null else ReleaseUpdate(tag, url)
+            }
+            .firstOrNull()
+    }.getOrNull()
+
+    private fun fetchGitlabRelease(): ReleaseUpdate? = runCatching {
+        val releases = JSONArray(
+            httpGet("https://gitlab.com/api/v4/projects/88960787/releases?per_page=1")
+        )
+        val release = releases.optJSONObject(0) ?: return@runCatching null
+        val tag = release.optString("tag_name").trim()
+        val links = release.optJSONObject("assets")?.optJSONArray("links") ?: JSONArray()
+        val url = (0 until links.length())
+            .map { links.getJSONObject(it).optString("url") }
+            .firstOrNull { it.endsWith(".apk", ignoreCase = true) || it.contains("/packages/generic/") }
+            .orEmpty()
+        if (tag.isBlank() || url.isBlank()) null else ReleaseUpdate(tag, url)
+    }.getOrNull()
+
+    private fun httpGet(url: String): String {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        return try {
+            connection.connectTimeout = 15000
+            connection.readTimeout = 20000
+            connection.setRequestProperty("User-Agent", "NotCustom")
+            connection.setRequestProperty("Accept", "application/json")
+            if (connection.responseCode !in 200..299) {
+                throw IllegalStateException("HTTP ${connection.responseCode}")
+            }
+            connection.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun downloadApk(url: String): File? = runCatching {
+        val dir = File(getApplication<Application>().cacheDir, "updates").apply { mkdirs() }
+        val target = File(dir, "NotCustom-update.apk")
+        val connection = URL(url).openConnection() as HttpURLConnection
+        try {
+            connection.instanceFollowRedirects = true
+            connection.connectTimeout = 20000
+            connection.readTimeout = 60000
+            connection.setRequestProperty("User-Agent", "NotCustom")
+            if (connection.responseCode !in 200..299) {
+                throw IllegalStateException("HTTP ${connection.responseCode}")
+            }
+            connection.inputStream.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            }
+        } finally {
+            connection.disconnect()
+        }
+        target
+    }.getOrNull()
 
     fun setColumns(value: Int) {
         prefs.columns = value
@@ -812,32 +1034,41 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         runCatching { widgetHost.stopListening() }
     }
 
-    fun openWidgetPicker() {
+    fun openWidgetPicker(packageName: String? = null) {
         _state.update {
-            it.copy(widgetPickerOpen = true, homeMenuOpen = false, settingsOpen = false)
+            it.copy(
+                widgetPickerOpen = true,
+                widgetPickerPackage = packageName,
+                homeMenuOpen = false,
+                settingsOpen = false,
+                menuApp = null
+            )
         }
     }
 
     fun closeWidgetPicker() {
-        _state.update { it.copy(widgetPickerOpen = false) }
+        _state.update { it.copy(widgetPickerOpen = false, widgetPickerPackage = null) }
     }
 
-    fun widgetChoices(): List<WidgetChoice> {
+    fun widgetChoices(packageName: String? = null): List<WidgetChoice> {
         val context = getApplication<Application>()
         val pm = context.packageManager
         return runCatching {
-            widgetManager.getInstalledProviders().mapNotNull { info ->
-                val appLabel = runCatching {
-                    pm.getApplicationLabel(
-                        pm.getApplicationInfo(info.provider.packageName, 0)
-                    ).toString()
-                }.getOrDefault(info.provider.packageName)
-                val label = info.loadLabel(pm)?.toString()?.takeIf { it.isNotBlank() }
-                    ?: appLabel
-                val cols = (info.minWidth / 70f).roundToInt().coerceAtLeast(1)
-                val rows = (info.minHeight / 70f).roundToInt().coerceAtLeast(1)
-                WidgetChoice(info, appLabel, label, "$cols×$rows")
-            }.sortedWith(compareBy({ it.appLabel.lowercase() }, { it.label.lowercase() }))
+            widgetManager.getInstalledProviders()
+                .filter { packageName == null || it.provider.packageName == packageName }
+                .mapNotNull { info ->
+                    val appLabel = runCatching {
+                        pm.getApplicationLabel(
+                            pm.getApplicationInfo(info.provider.packageName, 0)
+                        ).toString()
+                    }.getOrDefault(info.provider.packageName)
+                    val label = info.loadLabel(pm)?.toString()?.takeIf { it.isNotBlank() }
+                        ?: appLabel
+                    val cols = (info.minWidth / 70f).roundToInt().coerceAtLeast(1)
+                    val rows = (info.minHeight / 70f).roundToInt().coerceAtLeast(1)
+                    WidgetChoice(info, appLabel, label, "$cols×$rows")
+                }
+                .sortedWith(compareBy({ it.appLabel.lowercase() }, { it.label.lowercase() }))
         }.getOrDefault(emptyList())
     }
 
@@ -855,6 +1086,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             _state.update {
                 it.copy(
                     widgetPickerOpen = false,
+                    widgetPickerPackage = null,
                     message = "Set NotCustom Home as your home app, then add the widget again."
                 )
             }
@@ -890,7 +1122,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private fun commitWidget(id: Int) {
         val updated = (_state.value.widgets + id).distinct()
         prefs.widgets = updated
-        _state.update { it.copy(widgets = updated, widgetPickerOpen = false) }
+        _state.update {
+            it.copy(widgets = updated, widgetPickerOpen = false, widgetPickerPackage = null)
+        }
     }
 
     fun removeWidget(id: Int) {

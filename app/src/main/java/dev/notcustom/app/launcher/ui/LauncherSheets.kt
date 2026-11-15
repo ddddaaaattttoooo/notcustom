@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +41,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -47,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -68,6 +71,7 @@ import dev.notcustom.app.ui.theme.NothingRed
 import dev.notcustom.app.ui.theme.Ok
 import dev.notcustom.app.ui.theme.Paper
 import dev.notcustom.app.ui.theme.Surface0
+import dev.notcustom.app.ui.theme.Surface1
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -140,9 +144,14 @@ fun AppMenuSheet(
                 viewModel.dismissMenu()
                 viewModel.openSettings()
             }
+            if (viewModel.widgetChoices(app.packageName).isNotEmpty()) {
+                MenuAction("ADD WIDGET") { viewModel.openWidgetPicker(app.packageName) }
+            }
             MenuAction("HIDE APP") { viewModel.hide(app) }
             MenuAction("APP INFO") { viewModel.appInfo(app) }
-            MenuAction("UNINSTALL") { viewModel.uninstall(app) }
+            if (viewModel.canUninstall(app)) {
+                MenuAction("UNINSTALL") { viewModel.uninstall(app) }
+            }
         }
     }
 }
@@ -264,6 +273,67 @@ fun LauncherSettingsSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = Muted
             )
+
+            LaunchedEffect(Unit) { viewModel.checkForUpdates() }
+
+            val update = state.update
+            Spacer(Modifier.height(12.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Surface1)
+                    .border(1.dp, Line, RoundedCornerShape(16.dp))
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("SOFTWARE UPDATE", style = MaterialTheme.typography.labelSmall, color = Muted)
+                    Text(
+                        when {
+                            update.downloading -> "DOWNLOADING ${update.latest.orEmpty()}…"
+                            update.checking -> "CHECKING…"
+                            update.available -> "VERSION ${update.latest.orEmpty()} AVAILABLE"
+                            update.message != null -> update.message
+                            else -> "NOT CHECKED"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (update.available) NothingRed else Paper
+                    )
+                }
+                if (update.available) {
+                    Button(
+                        onClick = viewModel::installUpdate,
+                        enabled = !update.downloading,
+                        shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NothingRed,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text("INSTALL", style = MaterialTheme.typography.labelSmall)
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { viewModel.checkForUpdates(force = true) },
+                        enabled = !update.checking && !update.downloading,
+                        shape = RoundedCornerShape(50),
+                        border = BorderStroke(1.dp, Line),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+                    ) {
+                        Text("CHECK", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            if (update.available) {
+                Text(
+                    "Downloads from GitHub, then opens Android's installer. Beta builds are debug-signed; if Android refuses the update, uninstall the old copy first.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Muted,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
             Spacer(Modifier.height(18.dp))
 
             Row(

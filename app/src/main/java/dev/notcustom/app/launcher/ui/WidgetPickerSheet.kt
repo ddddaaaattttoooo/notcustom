@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import dev.notcustom.app.launcher.LauncherViewModel
+import dev.notcustom.app.launcher.LauncherState
 import dev.notcustom.app.launcher.WidgetChoice
 import dev.notcustom.app.ui.theme.Line
 import dev.notcustom.app.ui.theme.Muted
@@ -68,10 +69,13 @@ import kotlinx.coroutines.withContext
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WidgetPickerSheet(
+    state: LauncherState,
     viewModel: LauncherViewModel,
     onInstall: (AppWidgetProviderInfo) -> Unit
 ) {
-    val choices = remember { viewModel.widgetChoices() }
+    val choices = remember(state.widgetPickerPackage) {
+        viewModel.widgetChoices(state.widgetPickerPackage)
+    }
     var query by remember { mutableStateOf("") }
     val filtered = remember(choices, query) {
         if (query.isBlank()) {
@@ -83,8 +87,8 @@ fun WidgetPickerSheet(
             }
         }
     }
-    val recommendations = remember(choices, query) {
-        if (query.isNotBlank()) emptyList() else choices
+    val recommendations = remember(choices, query, state.widgetPickerPackage) {
+        if (query.isNotBlank() || state.widgetPickerPackage != null) emptyList() else choices
             .map { it to recommendationScore(it) }
             .filter { it.second > 0 }
             .sortedByDescending { it.second }
@@ -123,7 +127,8 @@ fun WidgetPickerSheet(
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                "Browse by app, or start with useful picks available on this phone.",
+                if (state.widgetPickerPackage == null) "Browse by app, or start with useful picks available on this phone."
+                else "Widgets provided by this app.",
                 style = MaterialTheme.typography.bodySmall,
                 color = Muted
             )
@@ -139,7 +144,8 @@ fun WidgetPickerSheet(
                 ) {
                     Text(
                         if (choices.isEmpty()) {
-                            "No widgets are available on this device."
+                            if (state.widgetPickerPackage != null) "This app does not provide widgets."
+                            else "No widgets are available on this device."
                         } else {
                             "No widgets match \"$query\"."
                         },

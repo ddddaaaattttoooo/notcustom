@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -121,6 +122,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
     }
     val returningKey = state.returning?.app?.key
     val context = LocalContext.current
+    val dropBounds = remember { mutableMapOf<HomeDropAction, Rect>() }
 
     val widgetConfig = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -151,14 +153,23 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
     val dockSlotBounds = remember { mutableStateMapOf<Int, Rect>() }
     var homeDragActive by remember { mutableStateOf(false) }
     var homeDrag by remember { mutableStateOf<HomeDrag?>(null) }
+    var widgetDrag by remember { mutableStateOf<WidgetDrag?>(null) }
     var drawerDrag by remember { mutableStateOf<DrawerDrag?>(null) }
+    val homeEditing = homeDrag != null || widgetDrag != null
+    val homeScale by animateFloatAsState(
+        targetValue = if (homeEditing) 0.88f else 1f,
+        animationSpec = tween(180),
+        label = "homeEditScale"
+    )
     val edgeThreshold = with(density) { 64.dp.toPx() }
     val drawerDragActive = drawerDrag?.active == true
     val homeDragActiveState = rememberUpdatedState(homeDragActive)
 
     LaunchedEffect(homeDrag, homeDrag?.edgeDirection, state.currentPage, state.pageCount) {
         val drag = homeDrag ?: return@LaunchedEffect
-        if (drag.edgeDirection == 0 || drag.edgeConsumed) return@LaunchedEffect
+        if (drag.edgeDirection == 0 || drag.edgeConsumed || drag.actionTarget != null) {
+            return@LaunchedEffect
+        }
         delay(420)
         if (homeDrag !== drag || drag.edgeDirection == 0 || drag.edgeConsumed) {
             return@LaunchedEffect
@@ -177,28 +188,39 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
             val pageSize = state.config.columns * HOME_ROWS
             val x = drag.origin.exactCenterX() + drag.offset.x
             val y = drag.origin.exactCenterY() + drag.offset.y
-            val dockTarget = dockSlotBounds.entries.firstOrNull {
-                it.value.contains(x.roundToInt(), y.roundToInt())
-            }?.key ?: -1
-            val direction = if (dockTarget >= 0) 0 else when {
-                x < edgeThreshold && state.currentPage > 0 -> -1
-                x > rootSize.width - edgeThreshold && state.pageCount < MAX_HOME_PAGES -> 1
-                else -> 0
+            val action = drag.actions.firstOrNull { action ->
+                dropBounds[action]?.contains(x.roundToInt(), y.roundToInt()) == true
             }
-            if (direction != drag.edgeDirection) {
-                drag.edgeDirection = direction
+            if (action != drag.actionTarget) drag.actionTarget = action
+            if (action != null) {
+                drag.hoverSlot = -1
+                drag.hoverDockSlot = -1
+                drag.edgeDirection = 0
                 drag.edgeConsumed = false
-            }
-            val target = if (direction != 0 || dockTarget >= 0) {
-                -1
             } else {
-                homeSlotBounds.entries.firstOrNull {
-                    it.key / pageSize == viewModel.state.value.currentPage &&
-                        it.value.contains(x.roundToInt(), y.roundToInt())
+                val dockTarget = dockSlotBounds.entries.firstOrNull {
+                    it.value.contains(x.roundToInt(), y.roundToInt())
                 }?.key ?: -1
+                val direction = if (dockTarget >= 0) 0 else when {
+                    x < edgeThreshold && state.currentPage > 0 -> -1
+                    x > rootSize.width - edgeThreshold && state.pageCount < MAX_HOME_PAGES -> 1
+                    else -> 0
+                }
+                if (direction != drag.edgeDirection) {
+                    drag.edgeDirection = direction
+                    drag.edgeConsumed = false
+                }
+                val target = if (direction != 0 || dockTarget >= 0) {
+                    -1
+                } else {
+                    homeSlotBounds.entries.firstOrNull {
+                        it.key / pageSize == viewModel.state.value.currentPage &&
+                            it.value.contains(x.roundToInt(), y.roundToInt())
+                    }?.key ?: -1
+                }
+                if (target != drag.hoverSlot) drag.hoverSlot = target
+                if (dockTarget != drag.hoverDockSlot) drag.hoverDockSlot = dockTarget
             }
-            if (target != drag.hoverSlot) drag.hoverSlot = target
-            if (dockTarget != drag.hoverDockSlot) drag.hoverDockSlot = dockTarget
         }
     }
 
@@ -214,10 +236,11 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 state.settingsOpen,
                 state.widgetPickerOpen,
                 state.menuApp,
+                widgetDrag,
                 swipeThreshold
             ) {
                 if (state.drawerOpen || state.homeMenuOpen || state.settingsOpen ||
-                    state.widgetPickerOpen || state.menuApp != null
+                    state.widgetPickerOpen || state.menuApp != null || widgetDrag != null
                 ) {
                     return@pointerInput
                 }
@@ -256,10 +279,11 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 state.homeMenuOpen,
                 state.settingsOpen,
                 state.widgetPickerOpen,
-                state.menuApp
+                state.menuApp,
+                widgetDrag
             ) {
                 if (state.drawerOpen || state.homeMenuOpen || state.settingsOpen ||
-                    state.widgetPickerOpen || state.menuApp != null
+                    state.widgetPickerOpen || state.menuApp != null || widgetDrag != null
                 ) {
                     return@pointerInput
                 }
@@ -298,6 +322,10 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .padding(horizontal = 18.dp)
+                .graphicsLayer {
+                    scaleX = homeScale
+                    scaleY = homeScale
+                }
         ) {
             Spacer(Modifier.height(8.dp))
             AtAGlanceHeader(
@@ -309,6 +337,23 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
             HomePager(
                 apps = pinned,
                 widgets = state.widgets,
+                onWidgetDragStart = { id, origin -> widgetDrag = WidgetDrag(id, origin) },
+                onWidgetDrag = { delta ->
+                    widgetDrag?.let { drag ->
+                        drag.offset += delta
+                        val x = drag.origin.exactCenterX() + drag.offset.x
+                        val y = drag.origin.exactCenterY() + drag.offset.y
+                        drag.hoverRemove = dropBounds[HomeDropAction.Remove]
+                            ?.contains(x.roundToInt(), y.roundToInt()) == true
+                    }
+                },
+                onWidgetDragEnd = {
+                    widgetDrag?.let { drag ->
+                        if (drag.hoverRemove) viewModel.removeWidget(drag.id)
+                    }
+                    widgetDrag = null
+                },
+                onWidgetDragCancel = { widgetDrag = null },
                 config = state.config,
                 viewModel = viewModel,
                 returningKey = returningKey,
@@ -319,14 +364,21 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 slotBounds = homeSlotBounds,
                 homeDrag = homeDrag,
                 onHomeDragStart = { app, page, origin ->
-                    homeDrag = HomeDrag(app, origin, page)
+                    homeDrag = HomeDrag(app, origin, page, homeDropActions(viewModel, app))
                     homeDragActive = true
                 },
                 onHomeDrag = updateHomeDrag,
                 onHomeDragEnd = {
                     homeDrag?.let { drag ->
+                        val action = drag.actionTarget
                         val moved = drag.offset.getDistance() > 24f
-                        if (moved) {
+                        if (action != null) {
+                            when (action) {
+                                HomeDropAction.Remove -> viewModel.unpin(drag.app)
+                                HomeDropAction.Uninstall -> viewModel.uninstall(drag.app)
+                                HomeDropAction.AppInfo -> viewModel.appInfo(drag.app)
+                            }
+                        } else if (moved) {
                             when {
                                 drag.edgeDirection != 0 && !drag.edgeConsumed ->
                                     viewModel.movePinnedToAdjacentPage(drag.app, drag.edgeDirection)
@@ -396,13 +448,20 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 slotBounds = dockSlotBounds,
                 homeDrag = homeDrag,
                 onDragStart = { app, origin ->
-                    homeDrag = HomeDrag(app, origin, state.currentPage)
+                    homeDrag = HomeDrag(app, origin, state.currentPage, homeDropActions(viewModel, app))
                     homeDragActive = true
                 },
                 onDrag = updateHomeDrag,
                 onDragEnd = {
                     homeDrag?.let { drag ->
-                        if (drag.offset.getDistance() <= 24f) {
+                        val action = drag.actionTarget
+                        if (action != null) {
+                            when (action) {
+                                HomeDropAction.Remove -> viewModel.unpin(drag.app)
+                                HomeDropAction.Uninstall -> viewModel.uninstall(drag.app)
+                                HomeDropAction.AppInfo -> viewModel.appInfo(drag.app)
+                            }
+                        } else if (drag.offset.getDistance() <= 24f) {
                             viewModel.showMenu(drag.app)
                         } else {
                             when {
@@ -517,7 +576,19 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
         }
 
         homeDrag?.let { drag ->
+            HomeDropBar(drag.actions, drag.actionTarget) { action, rect ->
+                dropBounds[action] = rect
+            }
             HomeDragGhost(drag, state.config, viewModel, state.iconPack)
+        }
+
+        widgetDrag?.let { drag ->
+            HomeDropBar(
+                actions = listOf(HomeDropAction.Remove),
+                hovered = if (drag.hoverRemove) HomeDropAction.Remove else null,
+                onBounds = { action, rect -> dropBounds[action] = rect }
+            )
+            WidgetDragGhost(drag)
         }
 
 
@@ -539,7 +610,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
         }
 
         if (state.widgetPickerOpen) {
-            WidgetPickerSheet(viewModel, installWidget)
+            WidgetPickerSheet(state, viewModel, installWidget)
         }
     }
 }
@@ -627,6 +698,10 @@ private fun DockRow(
 private fun HomePager(
     apps: List<LauncherApp>,
     widgets: List<Int>,
+    onWidgetDragStart: (Int, Rect) -> Unit,
+    onWidgetDrag: (Offset) -> Unit,
+    onWidgetDragEnd: () -> Unit,
+    onWidgetDragCancel: () -> Unit,
     config: LauncherConfig,
     viewModel: LauncherViewModel,
     returningKey: String?,
@@ -668,6 +743,10 @@ private fun HomePager(
                 page = page,
                 apps = apps,
                 widgets = widgets,
+                onWidgetDragStart = onWidgetDragStart,
+                onWidgetDrag = onWidgetDrag,
+                onWidgetDragEnd = onWidgetDragEnd,
+                onWidgetDragCancel = onWidgetDragCancel,
                 config = config,
                 viewModel = viewModel,
                 returningKey = returningKey,
@@ -698,6 +777,10 @@ private fun HomePage(
     pageCount: Int,
     apps: List<LauncherApp>,
     widgets: List<Int>,
+    onWidgetDragStart: (Int, Rect) -> Unit,
+    onWidgetDrag: (Offset) -> Unit,
+    onWidgetDragEnd: () -> Unit,
+    onWidgetDragCancel: () -> Unit,
     config: LauncherConfig,
     viewModel: LauncherViewModel,
     returningKey: String?,
@@ -725,7 +808,18 @@ private fun HomePage(
             horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = PaddingValues(top = 4.dp, bottom = 8.dp)
         ) {
-            pageWidgets.forEach { id -> item(key = "widget-$id", span = { GridItemSpan(maxLineSpan) }) { WidgetView(id, viewModel.widgetHost) } }
+            pageWidgets.forEach { id ->
+                item(key = "widget-$id", span = { GridItemSpan(maxLineSpan) }) {
+                    WidgetView(
+                        id = id,
+                        host = viewModel.widgetHost,
+                        onDragStart = { origin -> onWidgetDragStart(id, origin) },
+                        onDrag = onWidgetDrag,
+                        onDragEnd = onWidgetDragEnd,
+                        onDragCancel = onWidgetDragCancel
+                    )
+                }
+            }
             items(config.columns * HOME_GRID_ROWS, key = { "home-slot-${pageStart + it}" }) { offset ->
                 val slot = pageStart + offset
                 val app = appsBySlot[slot]
@@ -764,12 +858,106 @@ private fun HomePage(
     }
 }
 
-private class HomeDrag(val app: LauncherApp, val origin: Rect, val sourcePage: Int) {
+private enum class HomeDropAction(val label: String) {
+    Remove("REMOVE"),
+    Uninstall("UNINSTALL"),
+    AppInfo("APP INFO")
+}
+
+private fun homeDropActions(viewModel: LauncherViewModel, app: LauncherApp): List<HomeDropAction> =
+    if (viewModel.canUninstall(app)) {
+        listOf(HomeDropAction.Remove, HomeDropAction.Uninstall)
+    } else {
+        listOf(HomeDropAction.Remove, HomeDropAction.AppInfo)
+    }
+
+@Composable
+private fun HomeDropBar(
+    actions: List<HomeDropAction>,
+    hovered: HomeDropAction?,
+    onBounds: (HomeDropAction, Rect) -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(top = 10.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        actions.forEach { action ->
+            val selected = hovered == action
+            Box(
+                Modifier
+                    .padding(horizontal = 5.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(if (selected) NothingRed else Color.Black.copy(alpha = 0.80f))
+                    .border(
+                        1.dp,
+                        if (selected) NothingRed else Color.White.copy(alpha = 0.22f),
+                        RoundedCornerShape(24.dp)
+                    )
+                    .onGloballyPositioned { c ->
+                        val b = c.boundsInRoot()
+                        onBounds(
+                            action,
+                            Rect(
+                                b.left.roundToInt(),
+                                b.top.roundToInt(),
+                                b.right.roundToInt(),
+                                b.bottom.roundToInt()
+                            )
+                        )
+                    }
+                    .padding(horizontal = 20.dp, vertical = 11.dp)
+            ) {
+                Text(
+                    action.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (selected) Color.White else Color.White.copy(alpha = 0.88f)
+                )
+            }
+        }
+    }
+}
+
+private class HomeDrag(
+    val app: LauncherApp,
+    val origin: Rect,
+    val sourcePage: Int,
+    val actions: List<HomeDropAction>
+) {
     var offset by mutableStateOf(Offset.Zero)
     var hoverSlot by mutableIntStateOf(-1)
     var hoverDockSlot by mutableIntStateOf(-1)
     var edgeDirection by mutableIntStateOf(0)
     var edgeConsumed by mutableStateOf(false)
+    var actionTarget by mutableStateOf<HomeDropAction?>(null)
+}
+
+private class WidgetDrag(val id: Int, val origin: Rect) {
+    var offset by mutableStateOf(Offset.Zero)
+    var hoverRemove by mutableStateOf(false)
+}
+
+@Composable
+private fun WidgetDragGhost(drag: WidgetDrag) {
+    val density = LocalDensity.current
+    val width = with(density) { drag.origin.width().toDp() }
+    val height = with(density) { drag.origin.height().toDp() }
+    Box(
+        Modifier
+            .offset {
+                IntOffset(
+                    (drag.origin.left + drag.offset.x).roundToInt(),
+                    (drag.origin.top + drag.offset.y).roundToInt()
+                )
+            }
+            .size(width, height)
+            .zIndex(40f)
+            .border(2.dp, NothingRed, RoundedCornerShape(18.dp))
+            .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(18.dp))
+    )
 }
 
 @Composable
@@ -891,31 +1079,92 @@ private fun PageStepButton(label: String, enabled: Boolean, onClick: () -> Unit)
 }
 
 @Composable
-private fun WidgetView(id: Int, host: AppWidgetHost) {
+private fun WidgetView(
+    id: Int,
+    host: AppWidgetHost,
+    onDragStart: (Rect) -> Unit,
+    onDrag: (Offset) -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit
+) {
     val context = LocalContext.current
-    AndroidView(
-        factory = { ctx ->
-            runCatching {
-                val info = android.appwidget.AppWidgetManager.getInstance(ctx).getAppWidgetInfo(id)
-                host.createView(ctx, id, info).apply {
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    )
-                }
-            }.getOrElse {
-                View(ctx).apply {
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    )
-                }
-            }
-        },
-        modifier = Modifier
+    var bounds by remember(id) { mutableStateOf(Rect()) }
+    Box(
+        Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-    )
+            .onGloballyPositioned { c ->
+                val b = c.boundsInRoot()
+                bounds = Rect(
+                    b.left.roundToInt(),
+                    b.top.roundToInt(),
+                    b.right.roundToInt(),
+                    b.bottom.roundToInt()
+                )
+            }
+            .pointerInput(id) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(
+                        requireUnconsumed = false,
+                        pass = PointerEventPass.Initial
+                    )
+                    var dragging = false
+                    var finished = false
+                    var total = Offset.Zero
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.changedToUp()) {
+                                if (dragging) {
+                                    onDragEnd()
+                                    finished = true
+                                }
+                                break
+                            }
+                            val delta = change.positionChange()
+                            if (!dragging) {
+                                total += delta
+                                if (total.getDistance() > viewConfiguration.touchSlop) break
+                                if (change.uptimeMillis - down.uptimeMillis >=
+                                    viewConfiguration.longPressTimeoutMillis
+                                ) {
+                                    dragging = true
+                                    onDragStart(bounds)
+                                }
+                            } else {
+                                change.consume()
+                                onDrag(delta)
+                            }
+                        }
+                    } finally {
+                        if (dragging && !finished) onDragCancel()
+                    }
+                }
+            }
+    ) {
+        AndroidView(
+            factory = { ctx ->
+                runCatching {
+                    val info = android.appwidget.AppWidgetManager.getInstance(ctx).getAppWidgetInfo(id)
+                    host.createView(ctx, id, info).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                        )
+                    }
+                }.getOrElse {
+                    View(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                        )
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
 }
 
 
