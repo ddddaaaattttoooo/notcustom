@@ -4,6 +4,10 @@
 
 <p align="center">ANDROID 12+ &nbsp;•&nbsp; NO ROOT &nbsp;•&nbsp; MIT LICENSE</p>
 
+<p align="center">
+  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.18-beta"><img alt="Download NotCustom 0.3.18-beta" src="https://img.shields.io/badge/Download-NotCustom%200.3.18--beta-ed1c24?style=for-the-badge" /></a>
+</p>
+
 NotCustom is an Android launcher with a flexible Home screen, app drawer, widgets, and optional Shizuku-powered system tweaks. It takes visual inspiration from Nothing OS while keeping Nothing Launcher intact.
 
 > Not affiliated with Nothing Technology Limited. NotCustom does not require root and does not add Glyph features.
@@ -12,7 +16,7 @@ NotCustom is an Android launcher with a flexible Home screen, app drawer, widget
 
 ### Download the APK
 
-Download the latest beta from [GitHub Releases](https://github.com/ddddaaaattttoooo/notcustom/releases). GitLab mirrors the source code; APK downloads are hosted on GitHub.
+Download the APK from [GitHub Releases](https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.18-beta).
 
 ### Install on your phone
 
@@ -67,7 +71,7 @@ The APK is created under `app/build/outputs/apk/debug/`. Release builds are sign
 
 ## Help and contributions
 
-Found a bug? Open an issue on [GitHub](https://github.com/ddddaaaattttoooo/notcustom/issues) or [GitLab](https://gitlab.com/ddddaaaattttoooo/notcustom/-/issues). Please include your phone model, Android version, NotCustom version, and steps to reproduce. Don't include private logs or personal data.
+Found a bug? Open a [GitHub issue](https://github.com/ddddaaaattttoooo/notcustom/issues). Please include your phone model, Android version, NotCustom version, and steps to reproduce. Don't include private logs or personal data.
 
 Merge requests and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the build and review workflow.
 
