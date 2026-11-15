@@ -12,7 +12,7 @@ NotCustom is an Android launcher with a flexible Home screen, app drawer, widget
 
 ### Download the APK
 
-Get the latest beta from [GitHub Releases](https://github.com/ddddaaaattttoooo/notcustom/releases). GitLab users can use the [GitLab Releases page](https://gitlab.com/ddddaaaattttoooo/notcustom/-/releases); its APK link points to the same published file.
+Download the latest beta from [GitHub Releases](https://github.com/ddddaaaattttoooo/notcustom/releases). GitLab mirrors the source code; APK downloads are hosted on GitHub.
 
 ### Install on your phone
 
