@@ -1,6 +1,12 @@
 package dev.notcustom.app.launcher.ui
 
+import android.app.AlarmManager
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Rect
+import android.os.BatteryManager
+import android.os.SystemClock
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -8,6 +14,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -32,7 +39,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -51,6 +57,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,15 +67,17 @@ import androidx.compose.ui.zIndex
 import dev.notcustom.app.launcher.LauncherApp
 import dev.notcustom.app.launcher.LauncherConfig
 import dev.notcustom.app.launcher.LauncherViewModel
+import dev.notcustom.app.launcher.AtAGlanceStyle
 import dev.notcustom.app.ui.theme.Muted
 import dev.notcustom.app.ui.theme.NothingRed
 import dev.notcustom.app.ui.theme.Paper
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
+import java.time.Instant
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
-import kotlin.math.hypot
 
 @Composable
 fun DotGlyph(
@@ -109,7 +118,12 @@ fun BrandMark(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
 }
 
 @Composable
-fun ClockHeader(onOpenSettings: () -> Unit) {
+fun AtAGlanceHeader(
+    style: AtAGlanceStyle,
+    use24HourClock: Boolean,
+    onOpenSettings: () -> Unit
+) {
+    val context = LocalContext.current
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -117,15 +131,47 @@ fun ClockHeader(onOpenSettings: () -> Unit) {
             delay(15_000)
         }
     }
-    val time = remember(now) { now.format(DateTimeFormatter.ofPattern("HH:mm")) }
+    val time = remember(now, use24HourClock) {
+        now.format(DateTimeFormatter.ofPattern(if (use24HourClock) "HH:mm" else "h:mm a", Locale.getDefault()))
+    }
     val date = remember(now) {
         now.format(DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault()))
             .uppercase(Locale.getDefault())
     }
+    val battery by produceState(initialValue = "--%" to "BATTERY STATUS", style) {
+        if (style == AtAGlanceStyle.BATTERY) {
+            while (true) {
+                value = readBatteryStatus(context)
+                delay(30_000)
+            }
+        }
+    }
+    val nextAlarm by produceState<LocalDateTime?>(initialValue = null, style) {
+        if (style == AtAGlanceStyle.NEXT_ALARM) {
+            while (true) {
+                value = readNextAlarm(context)
+                delay(30_000)
+            }
+        }
+    }
+    val headline = when (style) {
+        AtAGlanceStyle.CLOCK -> time
+        AtAGlanceStyle.BATTERY -> battery.first
+        AtAGlanceStyle.NEXT_ALARM -> nextAlarm?.format(
+            DateTimeFormatter.ofPattern(if (use24HourClock) "HH:mm" else "h:mm a", Locale.getDefault())
+        ) ?: "--:--"
+    }
+    val supportingText = when (style) {
+        AtAGlanceStyle.CLOCK -> date
+        AtAGlanceStyle.BATTERY -> "${battery.second}  ·  $date"
+        AtAGlanceStyle.NEXT_ALARM -> nextAlarm?.format(
+            DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault())
+        )?.uppercase(Locale.getDefault()) ?: "NO UPCOMING ALARM"
+    }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(
-                time,
+                headline,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
                 fontSize = 46.sp,
@@ -136,7 +182,7 @@ fun ClockHeader(onOpenSettings: () -> Unit) {
                 Box(Modifier.width(24.dp).height(2.dp).background(NothingRed))
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    date,
+                    supportingText,
                     style = MaterialTheme.typography.labelSmall,
                     color = Color.White.copy(alpha = 0.65f)
                 )
@@ -145,6 +191,27 @@ fun ClockHeader(onOpenSettings: () -> Unit) {
         BrandMark(onClick = onOpenSettings)
     }
 }
+
+private fun readBatteryStatus(context: Context): Pair<String, String> {
+    val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+    val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+    val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+    val percent = if (level >= 0 && scale > 0) (level * 100 / scale).coerceIn(0, 100) else -1
+    val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+    val label = when (status) {
+        BatteryManager.BATTERY_STATUS_CHARGING -> "CHARGING"
+        BatteryManager.BATTERY_STATUS_FULL -> "FULLY CHARGED"
+        else -> "BATTERY STATUS"
+    }
+    return (if (percent >= 0) "$percent%" else "--%") to label
+}
+
+private fun readNextAlarm(context: Context): LocalDateTime? = runCatching {
+    val alarmManager = context.getSystemService(AlarmManager::class.java)
+    alarmManager.nextAlarmClock?.triggerTime?.let { triggerTime ->
+        Instant.ofEpochMilli(triggerTime).atZone(ZoneId.systemDefault()).toLocalDateTime()
+    }
+}.getOrNull()
 
 @Composable
 fun AppIcon(bitmap: ImageBitmap?, sizeDp: Int, monochrome: Boolean) {
@@ -185,10 +252,13 @@ fun AppCell(
     iconPackKey: String? = null,
     isReturning: Boolean = false,
     isDragging: Boolean = false,
-    dragOffset: Offset = Offset.Zero,
-    onDragStart: (() -> Unit)? = null,
+    sourceHidden: Boolean = false,
+    dragOffset: () -> Offset = { Offset.Zero },
+    dragEnabled: Boolean = fromHome,
+    onDragStart: ((Rect?) -> Unit)? = null,
     onDrag: ((Offset) -> Unit)? = null,
     onDragEnd: (() -> Unit)? = null,
+    onDragCancel: (() -> Unit)? = null,
     onPosition: ((String, Rect?) -> Unit)? = null
 ) {
     val icon by produceState<ImageBitmap?>(
@@ -202,6 +272,7 @@ fun AppCell(
     val currentDragStart by rememberUpdatedState(onDragStart)
     val currentDrag by rememberUpdatedState(onDrag)
     val currentDragEnd by rememberUpdatedState(onDragEnd)
+    val currentDragCancel by rememberUpdatedState(onDragCancel)
     val currentOnPosition by rememberUpdatedState(onPosition)
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.88f else 1f, label = "iconScale")
@@ -211,27 +282,51 @@ fun AppCell(
         label = "returnScale"
     )
     var iconBounds by remember { mutableStateOf<Rect?>(null) }
+    var suppressClickUntil by remember { mutableStateOf(0L) }
     val view = LocalView.current
 
     DisposableEffect(app.key) {
         onDispose { currentOnPosition?.invoke(app.key, null) }
     }
 
-    val cellModifier = if (fromHome && onDragStart != null && onDrag != null && onDragEnd != null) {
+    val cellModifier = if (dragEnabled && onDragStart != null && onDrag != null && onDragEnd != null) {
         modifier
-            .zIndex(if (isDragging) 2f else 0f)
+            .zIndex(if (isDragging) 3f else 0f)
             .graphicsLayer {
-                translationX = if (isDragging) dragOffset.x else 0f
-                translationY = if (isDragging) dragOffset.y else 0f
-                scaleX = if (isDragging) 1.06f else 1f
-                scaleY = if (isDragging) 1.06f else 1f
-                alpha = if (isDragging) 0.92f else 1f
+                if (isDragging) {
+                    if (sourceHidden) {
+                        alpha = 0f
+                    } else {
+                        val offset = dragOffset()
+                        translationX = offset.x
+                        translationY = offset.y
+                        scaleX = 1.06f
+                        scaleY = 1.06f
+                        alpha = 0.93f
+                    }
+                }
             }
+            .then(
+                if (isDragging && !sourceHidden) {
+                    Modifier.border(2.dp, NothingRed, RoundedCornerShape(18.dp))
+                } else {
+                    Modifier
+                }
+            )
             .pointerInput(app.key) {
                 detectDragGesturesAfterLongPress(
-                    onDragStart = { currentDragStart?.invoke() },
-                    onDragEnd = { currentDragEnd?.invoke() },
-                    onDragCancel = { currentDragEnd?.invoke() },
+                    onDragStart = {
+                        suppressClickUntil = Long.MAX_VALUE
+                        currentDragStart?.invoke(iconBounds)
+                    },
+                    onDragEnd = {
+                        suppressClickUntil = SystemClock.uptimeMillis() + 250
+                        currentDragEnd?.invoke()
+                    },
+                    onDragCancel = {
+                        suppressClickUntil = SystemClock.uptimeMillis() + 250
+                        currentDragCancel?.invoke()
+                    },
                     onDrag = { change, amount ->
                         change.consume()
                         currentDrag?.invoke(amount)
@@ -241,7 +336,11 @@ fun AppCell(
             .clickable(
                 interactionSource = interaction,
                 indication = null
-            ) { viewModel.launch(app, iconBounds, fromHome, view) }
+            ) {
+                if (SystemClock.uptimeMillis() >= suppressClickUntil) {
+                    viewModel.launch(app, iconBounds, fromHome, view)
+                }
+            }
     } else {
         modifier
             .fillMaxWidth()
@@ -268,22 +367,15 @@ fun AppCell(
                     scaleY = scale * returnScale
                 }
                 .onGloballyPositioned { coordinates ->
-                    if (fromHome) {
-                        // ActivityOptions expects coordinates relative to its source view.
-                        val bounds = coordinates.boundsInRoot()
-                        iconBounds = Rect(
-                            bounds.left.roundToInt(),
-                            bounds.top.roundToInt(),
-                            bounds.right.roundToInt(),
-                            bounds.bottom.roundToInt()
-                        )
-                    }
-                    currentOnPosition?.invoke(app.key, coordinates.boundsInRoot().let { bounds ->
-                        Rect(
-                            bounds.left.roundToInt(), bounds.top.roundToInt(),
-                            bounds.right.roundToInt(), bounds.bottom.roundToInt()
-                        )
-                    })
+                    // Keep the icon bounds for the return-to-home animation.
+                    val bounds = coordinates.boundsInRoot()
+                    iconBounds = Rect(
+                        bounds.left.roundToInt(),
+                        bounds.top.roundToInt(),
+                        bounds.right.roundToInt(),
+                        bounds.bottom.roundToInt()
+                    )
+                    currentOnPosition?.invoke(app.key, iconBounds)
                 }
         ) {
             AppIcon(icon, config.iconSize, config.monochrome)
@@ -317,7 +409,13 @@ fun AppGrid(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 4.dp, bottom = 8.dp)
     ) {
         items(apps.size, key = { apps[it].key }) { index ->
-            AppCell(apps[index], config, viewModel, iconPackKey = iconPackKey)
+            AppCell(
+                apps[index],
+                config,
+                viewModel,
+                showLabel = config.showLabels,
+                iconPackKey = iconPackKey
+            )
         }
     }
 }
@@ -346,82 +444,6 @@ fun SearchPill(onClick: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = Color.White.copy(alpha = 0.65f)
             )
-        }
-    }
-}
-
-@Composable
-fun DockRow(
-    apps: List<LauncherApp>,
-    config: LauncherConfig,
-    viewModel: LauncherViewModel,
-    returningKey: String? = null,
-    iconPackKey: String? = null
-) {
-    if (apps.isEmpty()) return
-    val cellBounds = remember { mutableStateMapOf<String, Rect>() }
-    var draggedApp by remember { mutableStateOf<LauncherApp?>(null) }
-    var dragOrigin by remember { mutableStateOf<Rect?>(null) }
-    var dragOffset by remember { mutableStateOf(Offset.Zero) }
-    androidx.compose.material3.Surface(
-        color = Color.White.copy(alpha = 0.10f),
-        shape = RoundedCornerShape(30.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            apps.forEach { app ->
-                AppCell(
-                    app,
-                    config,
-                    viewModel,
-                    modifier = Modifier.weight(1f),
-                    showLabel = false,
-                    iconPackKey = iconPackKey,
-                    isReturning = returningKey == app.key,
-                    isDragging = draggedApp?.key == app.key,
-                    dragOffset = dragOffset,
-                    onDragStart = {
-                        draggedApp = app
-                        dragOrigin = cellBounds[app.key]?.let { Rect(it) }
-                        dragOffset = Offset.Zero
-                    },
-                    onDrag = { dragOffset += it },
-                    onDragEnd = {
-                        val bounds = dragOrigin
-                        if (bounds != null && hypot(
-                                dragOffset.x.toDouble(), dragOffset.y.toDouble()
-                            ) > 24.0
-                        ) {
-                            val x = bounds.exactCenterX() + dragOffset.x
-                            val y = bounds.exactCenterY() + dragOffset.y
-                            val targetKey = cellBounds.entries
-                                .filter { it.key != app.key }
-                                .minByOrNull {
-                                    hypot(
-                                        (it.value.exactCenterX() - x).toDouble(),
-                                        (it.value.exactCenterY() - y).toDouble()
-                                    )
-                                }?.key
-                            apps.firstOrNull { it.key == targetKey }?.let { target ->
-                                viewModel.moveDock(app, target)
-                            }
-                        }
-                        draggedApp = null
-                        dragOrigin = null
-                        dragOffset = Offset.Zero
-                    },
-                    onPosition = { key, rect ->
-                        if (rect == null) cellBounds.remove(key) else cellBounds[key] = rect
-                    }
-                )
-            }
         }
     }
 }

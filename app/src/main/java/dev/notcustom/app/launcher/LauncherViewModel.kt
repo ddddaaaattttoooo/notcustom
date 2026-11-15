@@ -15,6 +15,7 @@ import android.os.Process
 import android.provider.Settings
 import android.view.View
 import androidx.compose.ui.graphics.ImageBitmap
+import dev.notcustom.app.R
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.notcustom.app.core.Shell
@@ -35,6 +36,8 @@ data class LauncherState(
     val apps: List<LauncherApp> = emptyList(),
     val pinned: List<ComponentName> = emptyList(),
     val pinPositions: Map<ComponentName, Int> = emptyMap(),
+    val pageCount: Int = 1,
+    val currentPage: Int = 0,
     val iconPacks: List<IconPackInfo> = emptyList(),
     val iconPack: String? = null,
     val dock: List<ComponentName> = emptyList(),
@@ -98,26 +101,38 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 val hidden = prefs.hidden
                 val pinned = prefs.pinned.filter { it in valid && it.packageName !in hidden }
                 val dock = prefs.dock.filter { it in valid && it.packageName !in hidden }
-                prefs.pinned = pinned
-                prefs.dock = dock
-                val pinPositions = normalizePinPositions(pinned)
+                val allPinned = (pinned + dock).distinct()
+                val pinPositions = normalizePinPositions(allPinned)
+                val unifiedPinned = pinPositions.entries.sortedBy { it.value }.map { it.key }
+                val config = prefs.config()
+                val pageCount = maxOf(
+                    prefs.pageCount,
+                    neededPages(pinPositions, config.columns),
+                    1
+                )
+                val currentPage = prefs.currentPage.coerceIn(0, pageCount - 1)
+                prefs.pageCount = pageCount
+                prefs.currentPage = currentPage
                 _state.update {
                     it.copy(
                         loading = false,
                         apps = apps,
-                        pinned = pinned,
+                        pinned = unifiedPinned,
                         pinPositions = pinPositions,
-                        dock = dock,
+                        pageCount = pageCount,
+                        currentPage = currentPage,
+                        dock = pinPositions.entries.filter { it.value < 0 }
+                            .sortedByDescending { it.value }.map { it.key },
                         hidden = hidden,
                         widgets = widgets,
-                        config = prefs.config(),
+                        config = config,
                         drawerMode = prefs.drawerMode,
                         iconPacks = iconPacks,
                         iconPack = iconPack
                     )
                 }
                 val byComponent = apps.associateBy { it.component }
-                val preload = ((pinned + dock).mapNotNull { byComponent[it] } + apps)
+                val preload = ((unifiedPinned).mapNotNull { byComponent[it] } + apps)
                     .distinctBy { it.key }
                 viewModelScope.launch { preload.forEach { icons.load(it) } }
             } else {
@@ -147,7 +162,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val launcherApps = context.getSystemService(LauncherApps::class.java)
         val bounds = sourceBounds?.takeIf { it.width() > 0 && it.height() > 0 }
         val opts = if (bounds != null && sourceView != null) {
-            @Suppress("DEPRECATION")
             ActivityOptions.makeScaleUpAnimation(
                 sourceView,
                 bounds.left,
@@ -156,7 +170,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 bounds.height()
             ).toBundle()
         } else {
-            null
+            ActivityOptions.makeCustomAnimation(
+                context,
+                R.anim.app_launch_enter,
+                R.anim.launcher_launch_exit
+            ).toBundle()
         }
         var launched = runCatching {
             launcherApps.startMainActivity(app.component, Process.myUserHandle(), bounds, opts)
@@ -291,29 +309,160 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun pin(app: LauncherApp) {
-        val updated = (_state.value.pinned + app.component).distinct()
-        val positions = _state.value.pinPositions.toMutableMap()
+        val current = _state.value
+        val positions = current.pinPositions.toMutableMap()
+        var pageCount = current.pageCount
+        var page = current.currentPage.coerceIn(0, pageCount - 1)
         if (app.component !in positions) {
-            var next = 0
-            while (next in positions.values) next++
-            positions[app.component] = next
+            var target = firstFreeSlot(positions, page, current.config.columns)
+            if (target == null) {
+                if (pageCount >= MAX_HOME_PAGES) {
+                    _state.update {
+                        it.copy(message = "No free space. Remove an app or a page first.")
+                    }
+                    return
+                }
+                page = pageCount
+                pageCount++
+                target = firstFreeSlot(positions, page, current.config.columns)
+            }
+            positions[app.component] = target ?: return
         }
-        prefs.pinned = updated
-        prefs.pinPositions = positions
-        _state.update { it.copy(pinned = updated, pinPositions = positions, menuApp = null) }
+        val (updated, dock) = writePlacements(positions)
+        prefs.pageCount = pageCount
+        prefs.currentPage = page
+        _state.update {
+            it.copy(
+                pinned = updated,
+                dock = dock,
+                pinPositions = positions,
+                pageCount = pageCount,
+                currentPage = page,
+                menuApp = null,
+                message = "Added to page ${page + 1}"
+            )
+        }
+    }
+
+    fun addPage() {
+        val current = _state.value
+        if (current.pageCount >= MAX_HOME_PAGES) {
+            _state.update { it.copy(message = "Maximum ${MAX_HOME_PAGES} pages.") }
+            return
+        }
+        val pageCount = current.pageCount + 1
+        val page = pageCount - 1
+        prefs.pageCount = pageCount
+        prefs.currentPage = page
+        _state.update {
+            it.copy(pageCount = pageCount, currentPage = page, message = "Page ${page + 1} added")
+        }
+    }
+
+    fun setCurrentPage(page: Int) {
+        val current = _state.value
+        val clamped = page.coerceIn(0, current.pageCount - 1)
+        if (clamped == current.currentPage) return
+        prefs.currentPage = clamped
+        _state.update { it.copy(currentPage = clamped) }
+    }
+
+    fun removeCurrentPage() {
+        val current = _state.value
+        if (current.pageCount <= 1) {
+            _state.update { it.copy(message = "Keep at least one page.") }
+            return
+        }
+        val pageSize = current.config.columns * HOME_ROWS
+        val start = current.currentPage * pageSize
+        val end = start + pageSize
+        val pageApps = current.pinPositions.filterValues { it in start until end }.keys
+        val shifted = current.pinPositions
+            .filterKeys { it !in pageApps }
+            .mapValues { (_, slot) -> if (slot >= end) slot - pageSize else slot }
+        val pageCount = current.pageCount - 1
+        val currentPage = current.currentPage.coerceIn(0, pageCount - 1)
+        val (pinned, dock) = writePlacements(shifted)
+        prefs.pageCount = pageCount
+        prefs.currentPage = currentPage
+        _state.update {
+            it.copy(
+                pinPositions = shifted,
+                pinned = pinned,
+                dock = dock,
+                pageCount = pageCount,
+                currentPage = currentPage,
+                message = if (pageApps.isEmpty()) "Page removed" else "Page removed; its apps removed from Home"
+            )
+        }
+    }
+
+    fun moveToPage(app: LauncherApp, page: Int) {
+        val current = _state.value
+        if (page !in 0 until current.pageCount) return
+        val positions = current.pinPositions.toMutableMap()
+        val target = firstFreeSlot(positions, page, current.config.columns)
+        if (target == null) {
+            _state.update { it.copy(message = "Page ${page + 1} is full.") }
+            return
+        }
+        positions[app.component] = target
+        val (pinned, dock) = writePlacements(positions)
+        _state.update {
+            it.copy(
+                pinned = pinned,
+                dock = dock,
+                pinPositions = positions,
+                currentPage = page,
+                menuApp = null,
+                message = "Moved to page ${page + 1}"
+            )
+        }
+    }
+
+    fun addToPage(app: LauncherApp, page: Int) {
+        val current = _state.value
+        if (page !in 0 until current.pageCount) return
+        val positions = current.pinPositions.toMutableMap()
+        val target = firstFreeSlot(positions, page, current.config.columns)
+        if (target == null) {
+            _state.update { it.copy(message = "Page ${page + 1} is full.") }
+            return
+        }
+        positions[app.component] = target
+        val (updated, dock) = writePlacements(positions)
+        prefs.currentPage = page
+        _state.update {
+            it.copy(
+                pinned = updated,
+                dock = dock,
+                pinPositions = positions,
+                currentPage = page,
+                menuApp = null,
+                message = "Added to page ${page + 1}"
+            )
+        }
     }
 
     fun unpin(app: LauncherApp) {
-        val updated = _state.value.pinned - app.component
         val positions = _state.value.pinPositions - app.component
-        prefs.pinned = updated
-        prefs.pinPositions = positions
-        _state.update { it.copy(pinned = updated, pinPositions = positions, menuApp = null) }
+        val (pinned, dock) = writePlacements(positions)
+        _state.update { it.copy(pinned = pinned, dock = dock, pinPositions = positions, menuApp = null) }
     }
 
     fun movePinnedToSlot(app: LauncherApp, targetSlot: Int) {
-        if (targetSlot !in 0..MAX_PIN_SLOT) return
-        val positions = _state.value.pinPositions.toMutableMap()
+        if (targetSlot !in -MAX_DOCK_ITEMS..MAX_PIN_SLOT) return
+        val current = _state.value
+        val pageSize = current.config.columns * HOME_ROWS
+        val targetPage = if (targetSlot < 0) current.currentPage else targetSlot / pageSize
+        if (targetSlot >= 0 &&
+            (targetPage >= MAX_HOME_PAGES || targetSlot % pageSize >= current.config.columns * HOME_GRID_ROWS)
+        ) return
+        val pageCount = if (targetSlot < 0) current.pageCount else maxOf(
+            current.pageCount,
+            targetPage + 1
+        ).coerceAtMost(MAX_HOME_PAGES)
+        val positions = current.pinPositions.toMutableMap()
         val sourceSlot = positions[app.component] ?: return
         if (sourceSlot == targetSlot) return
         val occupying = positions.entries.firstOrNull {
@@ -321,43 +470,242 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }?.key
         positions[app.component] = targetSlot
         if (occupying != null) positions[occupying] = sourceSlot
-        prefs.pinPositions = positions
-        _state.update { it.copy(pinPositions = positions) }
+        val (pinned, dock) = writePlacements(positions)
+        prefs.pageCount = pageCount
+        prefs.currentPage = targetPage
+        _state.update {
+            it.copy(
+                pinned = pinned,
+                dock = dock,
+                pinPositions = positions,
+                pageCount = pageCount,
+                currentPage = targetPage
+            )
+        }
+    }
+
+    fun movePinnedToCurrentPage(app: LauncherApp) {
+        val current = _state.value
+        val target = firstFreeSlot(current.pinPositions, current.currentPage, current.config.columns)
+        if (target == null) {
+            _state.update { it.copy(message = "This page is full. Add a page or make room.") }
+            return
+        }
+        val positions = current.pinPositions.toMutableMap()
+        positions[app.component] = target
+        val (pinned, dock) = writePlacements(positions)
+        _state.update { it.copy(pinned = pinned, dock = dock, pinPositions = positions) }
+    }
+
+    fun addToSlot(app: LauncherApp, targetSlot: Int) {
+        val current = _state.value
+        if (targetSlot < 0 ||
+            targetSlot / (current.config.columns * HOME_ROWS) >= MAX_HOME_PAGES ||
+            targetSlot % (current.config.columns * HOME_ROWS) >= current.config.columns * HOME_GRID_ROWS
+        ) {
+            return
+        }
+        if (app.component in current.pinPositions) {
+            movePinnedToSlot(app, targetSlot)
+            return
+        }
+        val positions = current.pinPositions.toMutableMap()
+        val target = freeSlotAtOrAfter(positions, targetSlot, current.config.columns)
+        if (target == null) {
+            _state.update { it.copy(message = "No free space. Remove an app or a page first.") }
+            return
+        }
+        positions[app.component] = target
+        val page = target / (current.config.columns * HOME_ROWS)
+        val pageCount = maxOf(current.pageCount, page + 1).coerceAtMost(MAX_HOME_PAGES)
+        val (updated, dock) = writePlacements(positions)
+        prefs.pageCount = pageCount
+        prefs.currentPage = page
+        _state.update {
+            it.copy(
+                pinned = updated,
+                dock = dock,
+                pinPositions = positions,
+                pageCount = pageCount,
+                currentPage = page,
+                menuApp = null,
+                message = "Added to page ${page + 1}"
+            )
+        }
+    }
+
+    fun addToAdjacentPage(app: LauncherApp, direction: Int) {
+        if (direction == 0) return
+        if (app.component in _state.value.pinPositions) {
+            movePinnedToAdjacentPage(app, direction)
+            return
+        }
+        val current = _state.value
+        val pageSize = current.config.columns * HOME_ROWS
+        val firstPage = (current.currentPage + direction).coerceAtLeast(0)
+        var page = firstPage
+        var pageCount = current.pageCount
+        var target: Int? = null
+        while (page in 0 until MAX_HOME_PAGES) {
+            if (page >= pageCount) pageCount = page + 1
+            target = firstFreeSlot(current.pinPositions, page, current.config.columns)
+            if (target != null) break
+            page += direction
+        }
+        if (target == null) {
+            _state.update { it.copy(message = "No free space. Remove an app or a page first.") }
+            return
+        }
+        val positions = current.pinPositions.toMutableMap()
+        positions[app.component] = target
+        val (updated, dock) = writePlacements(positions)
+        prefs.pageCount = pageCount
+        prefs.currentPage = page
+        _state.update {
+            it.copy(
+                pinned = updated,
+                dock = dock,
+                pinPositions = positions,
+                pageCount = pageCount,
+                currentPage = page,
+                menuApp = null,
+                message = "Added to page ${page + 1}"
+            )
+        }
+    }
+
+    fun movePinnedToAdjacentPage(app: LauncherApp, direction: Int) {
+        if (direction == 0) return
+        val current = _state.value
+        val pageSize = current.config.columns * HOME_ROWS
+        val sourceSlot = current.pinPositions[app.component] ?: return
+        val sourcePage = if (sourceSlot < 0) current.currentPage else sourceSlot / pageSize
+        var page = (sourcePage + direction).coerceAtLeast(0)
+        if (page == sourcePage) {
+            _state.update { it.copy(message = "Already on the first page.") }
+            return
+        }
+        if (page >= MAX_HOME_PAGES) {
+            _state.update { it.copy(message = "Maximum ${MAX_HOME_PAGES} pages.") }
+            return
+        }
+        var pageCount = current.pageCount
+        var target: Int? = null
+        while (page in 0 until MAX_HOME_PAGES) {
+            if (page >= pageCount) pageCount = page + 1
+            target = firstFreeSlot(current.pinPositions, page, current.config.columns)
+            if (target != null) break
+            page += direction
+        }
+        if (target == null) {
+            _state.update { it.copy(message = "No free space on the ${if (direction > 0) "next" else "previous"} page.") }
+            return
+        }
+        val positions = current.pinPositions.toMutableMap()
+        positions[app.component] = target
+        val (pinned, dock) = writePlacements(positions)
+        prefs.pageCount = pageCount
+        prefs.currentPage = page
+        _state.update {
+            it.copy(
+                pinned = pinned,
+                dock = dock,
+                pinPositions = positions,
+                pageCount = pageCount,
+                currentPage = page,
+                message = "Moved to page ${page + 1}"
+            )
+        }
+    }
+
+    private fun freeSlotAtOrAfter(
+        positions: Map<ComponentName, Int>,
+        startSlot: Int,
+        columns: Int
+    ): Int? {
+        val pageSize = columns * HOME_ROWS
+        var page = startSlot / pageSize
+        if (page >= MAX_HOME_PAGES) return null
+        val used = positions.values.toSet()
+        if (startSlot !in used) return startSlot
+        val pageEnd = page * pageSize + columns * HOME_GRID_ROWS
+        for (slot in startSlot + 1 until pageEnd) {
+            if (slot !in used) return slot
+        }
+        page++
+        while (page < MAX_HOME_PAGES) {
+            val free = firstFreeSlot(positions, page, columns)
+            if (free != null) return free
+            page++
+        }
+        return null
     }
 
     fun addDock(app: LauncherApp) {
-        val current = _state.value.dock
-        if (current.contains(app.component) || current.size >= 5) return
-        val updated = current + app.component
-        prefs.dock = updated
-        _state.update { it.copy(dock = updated, menuApp = null) }
+        val occupied = _state.value.pinPositions.values.filter { it < 0 }.toSet()
+        val index = (0 until MAX_DOCK_ITEMS).firstOrNull { -(it + 1) !in occupied }
+        if (index == null && app.component !in _state.value.pinPositions) {
+            _state.update { it.copy(message = "Dock is full. Move an icon out first.") }
+            return
+        }
+        addToDock(app, index ?: 0)
     }
 
-    fun removeDock(app: LauncherApp) {
-        val updated = _state.value.dock - app.component
-        prefs.dock = updated
-        _state.update { it.copy(dock = updated, menuApp = null) }
+    fun addToDock(app: LauncherApp, dockIndex: Int) {
+        if (dockIndex !in 0 until MAX_DOCK_ITEMS) return
+        val current = _state.value
+        val targetSlot = -(dockIndex + 1)
+        if (app.component in current.pinPositions) {
+            movePinnedToSlot(app, targetSlot)
+            return
+        }
+        val positions = current.pinPositions.toMutableMap()
+        val occupying = positions.entries.firstOrNull { it.value == targetSlot }?.key
+        if (occupying != null) {
+            val freeDock = (0 until MAX_DOCK_ITEMS)
+                .map { -(it + 1) }
+                .firstOrNull { it !in positions.values && it != targetSlot }
+            val homeSlot = if (freeDock == null) {
+                firstFreeSlot(positions, current.currentPage, current.config.columns)
+            } else null
+            val replacement = freeDock ?: homeSlot
+            if (replacement == null) {
+                _state.update { it.copy(message = "No free space to move the dock icon.") }
+                return
+            }
+            positions[occupying] = replacement
+        }
+        positions[app.component] = targetSlot
+        val (pinned, dock) = writePlacements(positions)
+        _state.update { it.copy(pinned = pinned, dock = dock, pinPositions = positions, menuApp = null) }
     }
+
+    fun removeDock(app: LauncherApp) = unpin(app)
 
     fun moveDock(app: LauncherApp, target: LauncherApp) {
-        val updated = _state.value.dock.toMutableList()
-        val fromIndex = updated.indexOf(app.component)
-        val targetIndex = updated.indexOf(target.component)
-        if (fromIndex < 0 || targetIndex < 0 || fromIndex == targetIndex) return
-        updated.add(targetIndex, updated.removeAt(fromIndex))
-        prefs.dock = updated
-        _state.update { it.copy(dock = updated) }
+        val targetSlot = _state.value.pinPositions[target.component] ?: return
+        if (targetSlot < 0) movePinnedToSlot(app, targetSlot)
     }
+
+    fun movePinnedToDock(app: LauncherApp) {
+        val current = _state.value
+        if ((current.pinPositions[app.component] ?: 0) < 0) return
+        val occupied = current.pinPositions.values.filter { it < 0 }.toSet()
+        val dockSlot = (-1 downTo -MAX_DOCK_ITEMS).firstOrNull { it !in occupied }
+        if (dockSlot == null) {
+            _state.update { it.copy(message = "Dock is full. Move an icon out first.") }
+            return
+        }
+        movePinnedToSlot(app, dockSlot)
+    }
+
+    fun moveDockToHomeSlot(app: LauncherApp, slot: Int) = movePinnedToSlot(app, slot)
 
     fun hide(app: LauncherApp) {
         val hidden = _state.value.hidden + app.packageName
-        val pinned = _state.value.pinned.filter { it.packageName != app.packageName }
         val pinPositions = _state.value.pinPositions.filterKeys { it.packageName != app.packageName }
-        val dock = _state.value.dock.filter { it.packageName != app.packageName }
         prefs.hidden = hidden
-        prefs.pinned = pinned
-        prefs.pinPositions = pinPositions
-        prefs.dock = dock
+        val (pinned, dock) = writePlacements(pinPositions)
         _state.update {
             it.copy(hidden = hidden, pinned = pinned, pinPositions = pinPositions, dock = dock, menuApp = null)
         }
@@ -389,7 +737,22 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun setColumns(value: Int) {
         prefs.columns = value
-        refreshConfig()
+        val current = _state.value
+        val config = prefs.config()
+        val pageCount = maxOf(
+            current.pageCount,
+            neededPages(current.pinPositions, config.columns)
+        ).coerceAtMost(MAX_HOME_PAGES)
+        val currentPage = current.currentPage.coerceIn(0, pageCount - 1)
+        prefs.pageCount = pageCount
+        prefs.currentPage = currentPage
+        _state.update {
+            it.copy(
+                config = config,
+                pageCount = pageCount,
+                currentPage = currentPage
+            )
+        }
     }
 
     fun setIconSize(value: Int) {
@@ -404,6 +767,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun setShowSearch(value: Boolean) {
         prefs.showSearch = value
+        refreshConfig()
+    }
+
+    fun setUse24HourClock(value: Boolean) {
+        prefs.use24HourClock = value
+        refreshConfig()
+    }
+
+    fun setAtAGlanceStyle(value: AtAGlanceStyle) {
+        prefs.atAGlanceStyle = value
         refreshConfig()
     }
 
@@ -543,13 +916,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         prefs.clearLayout()
         val apps = _state.value.apps
         if (apps.isNotEmpty()) applyDefaults(apps)
-        val pinned = prefs.pinned
-        val pinPositions = normalizePinPositions(pinned)
+        val pinPositions = normalizePinPositions(prefs.pinned + prefs.dock)
+        val pinned = pinPositions.entries.sortedBy { it.value }.map { it.key }
+        prefs.pageCount = 1
+        prefs.currentPage = 0
         _state.update {
             it.copy(
                 pinned = pinned,
                 pinPositions = pinPositions,
-                dock = prefs.dock,
+                pageCount = 1,
+                currentPage = 0,
+                dock = pinPositions.entries.filter { it.value < 0 }
+                    .sortedByDescending { it.value }.map { it.key },
                 hidden = prefs.hidden,
                 config = prefs.config()
             )
@@ -564,6 +942,36 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val ids = prefs.widgets.filter { widgetManager.getAppWidgetInfo(it) != null }
         if (ids != prefs.widgets) prefs.widgets = ids
         return ids
+    }
+
+    private fun firstFreeSlot(
+        positions: Map<ComponentName, Int>,
+        page: Int,
+        columns: Int
+    ): Int? {
+        val pageSize = columns * HOME_ROWS
+        val start = page * pageSize
+        val used = positions.values.toSet()
+        return (start until start + columns * HOME_GRID_ROWS).firstOrNull { it !in used }
+    }
+
+    private fun writePlacements(
+        positions: Map<ComponentName, Int>
+    ): Pair<List<ComponentName>, List<ComponentName>> {
+        val home = positions.entries.filter { it.value >= 0 }.sortedBy { it.value }.map { it.key }
+        val dock = positions.entries.filter { it.value < 0 }
+            .sortedByDescending { it.value }.map { it.key }
+        prefs.pinned = home
+        prefs.dock = dock
+        prefs.pinPositions = positions
+        return positions.entries.sortedBy { it.value }.map { it.key } to dock
+    }
+
+    private fun neededPages(positions: Map<ComponentName, Int>, columns: Int): Int {
+        val highest = positions.values.filter { it >= 0 }.maxOrNull() ?: -1
+        if (highest < 0) return 1
+        val pageSize = columns * HOME_ROWS
+        return ((highest + 1) + pageSize - 1) / pageSize
     }
 
     private fun applyDefaults(apps: List<LauncherApp>) {
@@ -593,22 +1001,64 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun normalizePinPositions(pinned: List<ComponentName>): Map<ComponentName, Int> {
+        val columns = prefs.columns
+        val pageSize = columns * HOME_ROWS
+        val homeCapacity = columns * HOME_GRID_ROWS
         val stored = prefs.pinPositions.filter { (component, slot) ->
-            component in pinned && slot in 0..MAX_PIN_SLOT
+            component in pinned && slot in -MAX_DOCK_ITEMS..MAX_PIN_SLOT
         }
         val result = LinkedHashMap<ComponentName, Int>()
         val used = mutableSetOf<Int>()
-        pinned.forEach { component ->
-            val position = stored[component]
-            if (position != null && used.add(position)) {
-                result[component] = position
+        val legacyDock = prefs.dock.filter { it in pinned }.take(MAX_DOCK_ITEMS)
+        val alreadyDocked = stored.filterValues { it < 0 }.entries
+            .sortedByDescending { it.value }
+            .map { it.key }
+        val oldBottomRow = if (legacyDock.isEmpty() && alreadyDocked.isEmpty()) {
+            stored.entries
+                .filter { it.value in (homeCapacity until pageSize) }
+                .sortedBy { it.value }
+                .map { it.key }
+                .take(MAX_DOCK_ITEMS)
+        } else emptyList()
+        val dockOrder = (legacyDock + alreadyDocked + oldBottomRow).distinct().take(MAX_DOCK_ITEMS)
+        dockOrder.forEachIndexed { index, component ->
+            val slot = -(index + 1)
+            result[component] = slot
+            used += slot
+        }
+
+        fun firstFreeHomeSlot(startPage: Int): Int? {
+            for (page in startPage until MAX_HOME_PAGES) {
+                val start = page * pageSize
+                val free = (start until start + homeCapacity).firstOrNull { it !in used }
+                if (free != null) return free
+            }
+            return null
+        }
+
+        val dockSet = dockOrder.toSet()
+        val overflow = mutableListOf<Pair<ComponentName, Int>>()
+        stored.entries.sortedBy { it.value }.forEach { (component, slot) ->
+            if (component in dockSet || slot < 0) return@forEach
+            val page = slot / pageSize
+            val pageOffset = slot % pageSize
+            if (pageOffset < homeCapacity && used.add(slot)) {
+                result[component] = slot
             } else {
-                var next = 0
-                while (next in used) next++
-                result[component] = next
-                used += next
+                overflow += component to page
             }
         }
+        overflow.forEach { (component, page) ->
+            firstFreeHomeSlot(page)?.let { slot -> result[component] = slot; used += slot }
+        }
+        pinned.filter { it !in result }.forEach { component ->
+            firstFreeHomeSlot(0)?.let { slot -> result[component] = slot; used += slot }
+        }
+        val home = result.entries.filter { it.value >= 0 }.sortedBy { it.value }.map { it.key }
+        val dock = result.entries.filter { it.value < 0 }
+            .sortedByDescending { it.value }.map { it.key }
+        prefs.pinned = home
+        prefs.dock = dock
         prefs.pinPositions = result
         return result
     }
@@ -631,7 +1081,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     companion object {
         private const val WIDGET_HOST_ID = 1024
-        private const val MAX_PIN_SLOT = 59
+        private const val MAX_PIN_SLOT = HOME_ROWS * 6 * MAX_HOME_PAGES - 1
 
         private val DOCK_CANDIDATES = listOf(
             "com.google.android.dialer",

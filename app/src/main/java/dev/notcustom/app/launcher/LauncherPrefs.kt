@@ -26,6 +26,16 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getBoolean("search", true)
         set(value) = prefs.edit().putBoolean("search", value).apply()
 
+    var use24HourClock: Boolean
+        get() = prefs.getBoolean("clock_24_hour", true)
+        set(value) = prefs.edit().putBoolean("clock_24_hour", value).apply()
+
+    var atAGlanceStyle: AtAGlanceStyle
+        get() = runCatching {
+            AtAGlanceStyle.valueOf(prefs.getString("at_a_glance_style", null) ?: AtAGlanceStyle.CLOCK.name)
+        }.getOrDefault(AtAGlanceStyle.CLOCK)
+        set(value) = prefs.edit().putString("at_a_glance_style", value.name).apply()
+
     var monochrome: Boolean
         get() = prefs.getBoolean("monochrome", false)
         set(value) = prefs.edit().putBoolean("monochrome", value).apply()
@@ -35,6 +45,14 @@ class LauncherPrefs(context: Context) {
             DrawerMode.valueOf(prefs.getString("drawer_mode", null) ?: DrawerMode.GRID.name)
         }.getOrDefault(DrawerMode.GRID)
         set(value) = prefs.edit().putString("drawer_mode", value.name).apply()
+
+    var pageCount: Int
+        get() = prefs.getInt("page_count", 1).coerceIn(1, MAX_HOME_PAGES)
+        set(value) = prefs.edit().putInt("page_count", value.coerceIn(1, MAX_HOME_PAGES)).apply()
+
+    var currentPage: Int
+        get() = prefs.getInt("current_page", 0).coerceIn(0, MAX_HOME_PAGES - 1)
+        set(value) = prefs.edit().putInt("current_page", value.coerceIn(0, MAX_HOME_PAGES - 1)).apply()
 
     var iconPack: String?
         get() = prefs.getString("icon_pack", null)
@@ -52,7 +70,9 @@ class LauncherPrefs(context: Context) {
                 if (split < 0) null else {
                     val component = ComponentName.unflattenFromString(entry.substring(0, split))
                     val position = entry.substring(split + 1).toIntOrNull()
-                    if (component != null && position != null && position >= 0) component to position else null
+                    if (component != null && position != null &&
+                        position in -MAX_DOCK_ITEMS..(MAX_HOME_PAGES * HOME_ROWS * 6 - 1)
+                    ) component to position else null
                 }
             }.toMap()
         set(value) = prefs.edit().putString(
@@ -79,6 +99,8 @@ class LauncherPrefs(context: Context) {
         iconSize = iconSize,
         showLabels = showLabels,
         showSearch = showSearch,
+        use24HourClock = use24HourClock,
+        atAGlanceStyle = atAGlanceStyle,
         monochrome = monochrome
     )
 
@@ -88,6 +110,8 @@ class LauncherPrefs(context: Context) {
             .remove("pin_positions")
             .remove("dock")
             .remove("hidden")
+            .remove("page_count")
+            .remove("current_page")
             .putBoolean("initialized", false)
             .apply()
     }

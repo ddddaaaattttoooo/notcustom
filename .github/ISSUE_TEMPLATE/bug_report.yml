@@ -1,0 +1,36 @@
+name: Bug report
+description: Report a problem with NotCustom
+labels: [bug]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Phone model
+      placeholder: For example, Nothing Phone 3a Lite
+    validations:
+      required: true
+  - type: input
+    id: android
+    attributes:
+      label: Android version / manufacturer software
+      placeholder: For example, Android 16 / Nothing OS 4
+    validations:
+      required: true
+  - type: input
+    id: app_version
+    attributes:
+      label: NotCustom version
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include what you expected and what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Extra details
+      description: Don't post private logs, account details, or personal data.

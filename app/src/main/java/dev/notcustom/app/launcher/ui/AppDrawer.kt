@@ -1,5 +1,6 @@
 package dev.notcustom.app.launcher.ui
 
+import android.graphics.Rect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
@@ -46,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -73,7 +75,12 @@ import androidx.compose.ui.text.style.TextOverflow
 fun AppDrawer(
     apps: List<LauncherApp>,
     state: LauncherState,
-    viewModel: LauncherViewModel
+    viewModel: LauncherViewModel,
+    dragActive: Boolean = false,
+    onAppDragStart: ((LauncherApp, Rect) -> Unit)? = null,
+    onAppDrag: ((Offset) -> Unit)? = null,
+    onAppDragEnd: (() -> Unit)? = null,
+    onAppDragCancel: (() -> Unit)? = null
 ) {
     val filtered = remember(apps, state.search) {
         if (state.search.isBlank()) {
@@ -110,7 +117,12 @@ fun AppDrawer(
         }
     }
 
-    Surface(color = Color(0xF70A0A0B), modifier = Modifier.fillMaxSize()) {
+    Surface(
+        color = Color(0xF70A0A0B),
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer { alpha = if (dragActive) 0f else 1f }
+    ) {
         Column(
             Modifier
                 .fillMaxSize()
@@ -168,7 +180,13 @@ fun AppDrawer(
                             ) { viewModel.setDrawerMode(mode) }
                         }
                     }
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Long-press and drag onto Home. Long-press without moving for options.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Muted
+                    )
+                    Spacer(Modifier.height(10.dp))
                 }
             }
             if (filtered.isEmpty()) {
@@ -206,7 +224,7 @@ fun AppDrawer(
                         contentPadding = PaddingValues(bottom = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listItems(filtered, key = { it.key }) { app ->
+                        listItems(filtered, key = { it.key }, contentType = { "app" }) { app ->
                             DrawerListRow(app, viewModel, state.iconPack)
                         }
                     }
@@ -218,8 +236,22 @@ fun AppDrawer(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                         contentPadding = PaddingValues(bottom = 16.dp)
                     ) {
-                        gridItems(filtered, key = { it.key }) { app ->
-                            AppCell(app, state.config, viewModel, fromHome = false, iconPackKey = state.iconPack)
+                        gridItems(filtered, key = { it.key }, contentType = { "app" }) { app ->
+                            AppCell(
+                                app,
+                                state.config,
+                                viewModel,
+                                showLabel = state.config.showLabels,
+                                fromHome = false,
+                                dragEnabled = true,
+                                iconPackKey = state.iconPack,
+                                onDragStart = { bounds ->
+                                    bounds?.let { onAppDragStart?.invoke(app, it) }
+                                },
+                                onDrag = { onAppDrag?.invoke(it) },
+                                onDragEnd = { onAppDragEnd?.invoke() },
+                                onDragCancel = { onAppDragCancel?.invoke() }
+                            )
                         }
                     }
                     DrawerMode.SMART -> {
@@ -235,7 +267,8 @@ fun AppDrawer(
                             groups.forEach { (category, group) ->
                                 item(
                                     key = "category-$category",
-                                    span = { GridItemSpan(maxLineSpan) }
+                                    span = { GridItemSpan(maxLineSpan) },
+                                    contentType = "header"
                                 ) {
                                     Text(
                                         "$category  ·  ${group.size}",
@@ -244,8 +277,22 @@ fun AppDrawer(
                                         modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
                                     )
                                 }
-                                gridItems(group, key = { "${category}-${it.key}" }) { app ->
-                                    AppCell(app, state.config, viewModel, fromHome = false, iconPackKey = state.iconPack)
+                                gridItems(group, key = { "${category}-${it.key}" }, contentType = { "app" }) { app ->
+                                    AppCell(
+                                        app,
+                                        state.config,
+                                        viewModel,
+                                        showLabel = state.config.showLabels,
+                                        fromHome = false,
+                                        dragEnabled = true,
+                                        iconPackKey = state.iconPack,
+                                        onDragStart = { bounds ->
+                                            bounds?.let { onAppDragStart?.invoke(app, it) }
+                                        },
+                                        onDrag = { onAppDrag?.invoke(it) },
+                                        onDragEnd = { onAppDragEnd?.invoke() },
+                                        onDragCancel = { onAppDragCancel?.invoke() }
+                                    )
                                 }
                             }
                         }

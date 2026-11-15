@@ -1,95 +1,43 @@
 package dev.notcustom.app.core
 
-import android.content.ComponentName
-import android.content.ServiceConnection
-import android.os.IBinder
-import dev.notcustom.app.BuildConfig
-import dev.notcustom.app.IShellService
-import dev.notcustom.app.ShellService
-import kotlinx.coroutines.CompletableDeferred
+import android.os.ParcelFileDescriptor
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
+import moe.shizuku.server.IShizukuService
+import moe.shizuku.server.IRemoteProcess
 import rikka.shizuku.Shizuku
 
 class ShellException(message: String) : Exception(message)
 
 object Shell {
-    private val mutex = Mutex()
-    private var service: IShellService? = null
-    private var pending: CompletableDeferred<IShellService>? = null
-
-    private val connection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            if (binder == null) return
-            val bound = IShellService.Stub.asInterface(binder)
-            service = bound
-            pending?.complete(bound)
-            pending = null
-            runCatching {
-                binder?.linkToDeath({
-                    service = null
-                    pending = null
-                }, 0)
+    suspend fun exec(command: String): String = withContext(Dispatchers.IO) {
+        val binder = Shizuku.getBinder()
+            ?: throw ShellException("Shizuku is not running")
+        val service = IShizukuService.Stub.asInterface(binder)
+        var process: IRemoteProcess? = null
+        try {
+            process = service.newProcess(arrayOf("sh", "-c", command), null, null)
+            val output = ParcelFileDescriptor.AutoCloseInputStream(process.inputStream)
+                .bufferedReader()
+                .use { it.readText() }
+            val error = ParcelFileDescriptor.AutoCloseInputStream(process.errorStream)
+                .bufferedReader()
+                .use { it.readText() }
+            val code = process.waitFor()
+            if (code != 0) {
+                throw ShellException(
+                    error.trim().ifBlank { output.trim() }.ifBlank { "exit $code" }
+                )
             }
-        }
-
-        override fun onServiceDisconnected(name: ComponentName?) {
-            service = null
-            pending = null
-        }
-    }
-
-    private fun args() = Shizuku.UserServiceArgs(
-        ComponentName(BuildConfig.APPLICATION_ID, ShellService::class.java.name)
-    )
-        .daemon(false)
-        .processNameSuffix("shell")
-        .debuggable(BuildConfig.DEBUG)
-        .version(BuildConfig.VERSION_CODE)
-
-    private suspend fun service(): IShellService {
-        service?.let { return it }
-        val deferred = mutex.withLock {
-            service?.let { return@withLock CompletableDeferred(it) }
-            pending ?: CompletableDeferred<IShellService>().also { created ->
-                pending = created
-                try {
-                    Shizuku.bindUserService(args(), connection)
-                } catch (t: Throwable) {
-                    pending = null
-                    throw t
-                }
-            }
-        }
-        val bound = withTimeoutOrNull(15_000) { deferred.await() }
-        if (bound == null) {
-            pending = null
-            throw ShellException("Shizuku service did not connect")
-        }
-        return bound
-    }
-
-    suspend fun exec(command: String): String {
-        val bound = service()
-        return withContext(Dispatchers.IO) {
-            val result = try {
-                bound.exec(command)
-            } catch (t: Throwable) {
-                throw ShellException(t.message ?: "command failed")
-            }
-            if (result.startsWith(ShellService.ERROR_PREFIX)) {
-                throw ShellException(result.removePrefix(ShellService.ERROR_PREFIX))
-            }
-            result
+            output.trim()
+        } catch (t: Throwable) {
+            if (t is ShellException) throw t
+            throw ShellException(t.message ?: "command failed")
+        } finally {
+            runCatching { process?.destroy() }
         }
     }
 
     fun reset() {
-        service = null
-        pending?.cancel()
-        pending = null
     }
 }

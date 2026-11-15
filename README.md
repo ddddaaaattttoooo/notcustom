@@ -1,87 +1,80 @@
-# NotCustom
+<p align="center">
+  <img src="assets/notcustom-banner.svg" alt="NotCustom — Make home yours" width="760" />
+</p>
 
-NotCustom is an Android app with two parts: a small set of Nothing OS tweaks and a separate, customizable home screen replacement with Nothing-inspired styling.
+<p align="center">
+  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases"><img alt="GitHub releases" src="https://img.shields.io/github/v/release/ddddaaaattttoooo/notcustom?include_prereleases&label=download" /></a>
+  <a href="https://gitlab.com/ddddaaaattttoooo/notcustom/-/releases"><img alt="GitLab releases" src="https://img.shields.io/gitlab/v/release/ddddaaaattttoooo%2Fnotcustom?gitlab_url=https%3A%2F%2Fgitlab.com&include_prereleases&label=GitLab" /></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-white" /></a>
+</p>
 
-It is not affiliated with Nothing. Nothing Launcher is left untouched.
+NotCustom is an Android launcher with a flexible Home screen, app drawer, widgets, and optional Shizuku-powered system tweaks. It takes visual inspiration from Nothing OS while keeping Nothing Launcher intact.
 
-## Status
-
-Beta: `0.3.7-beta` (versionCode 10). Expect rough edges and breaking changes.
-
-## Features
-
-### NotCustom Home
-
-- Nothing-inspired home screen with a separate HOME activity
-- App drawer with GRID, LIST, and SMART modes
-- Free-position app placement with saved positions
-- Dock, pinned apps, hidden apps, and configurable columns/icon size/labels
-- Custom widget picker with categories, search, and previews
-- Icon pack support, including `appfilter.xml` mappings
-- Home gestures:
-  - Swipe up: open the app drawer
-  - Swipe down on home: open the notification shade
-  - Double-tap home background: turn off the screen
-  - Long-press home: home menu
-
-### Tweaks
-
-- FEEL and DISPLAY presets
-- Density and font-scale controls
-- Quick Settings tile
-- About screen
-
-System-level tweaks use Shizuku. The home screen gestures do not require Shizuku.
-
-## Requirements
-
-- Android 12 or newer (minSdk 31, targetSdk 34)
-- Tested on a Nothing Phone 3a Lite running Nothing OS 4.x
-- JDK 17 and Android SDK 34 to build
-- Shizuku only for protected system tweaks
-- Accessibility access only for screen-off and notification-shade gestures
-
-## Build
-
-```bash
-./gradlew assembleDebug
-./gradlew assembleRelease
-```
-
-The debug APK is written to `app/build/outputs/apk/debug/`, and the release APK to `app/build/outputs/apk/release/`.
-
-The current release build is signed with the Android debug key so it can be installed over local test builds. Use your own release keystore before distributing builds.
+> Not affiliated with Nothing Technology Limited. NotCustom does not require root and does not add Glyph features.
 
 ## Install
 
-```bash
-adb install -r app/build/outputs/apk/release/app-release.apk
-```
+### Download the APK
 
-Then:
+Get the latest beta from [GitHub Releases](https://github.com/ddddaaaattttoooo/notcustom/releases). GitLab users can use the [GitLab Releases page](https://gitlab.com/ddddaaaattttoooo/notcustom/-/releases); its APK link points to the same published file.
 
-1. Open NotCustom Home and set it as the default home app.
-2. Open Home Settings and enable Gesture Access if you want double-tap screen-off and swipe-down notifications.
-3. On sideloaded builds, Android may require **App Info > Allow restricted settings** before the accessibility service can be enabled.
+### Install on your phone
+
+1. Open the release page on your Android phone and download `NotCustom-…-release.apk`.
+2. Open the downloaded file. If Android asks, allow your browser or Files app to install unknown apps, then confirm **Install**.
+3. Press Home and choose **NotCustom Home**. Choose **Always** if you want it as your default launcher. You can change this later in Android's Default apps settings.
+4. Optional: open Home Settings to enable accessibility access for screen-off and notification-shade gestures. Android may require **App info → Allow restricted settings** for a sideloaded build.
+
+To update, install the newer APK over the existing app. Beta APKs use Android's debug signing key, so Android may reject an update if the two APKs were signed with different keys. Uninstalling first removes NotCustom's saved layout and settings. A stable release-signing key is needed before promising seamless updates between every release.
+
+## Compatibility
+
+- **Android 12 or newer** is required. NotCustom Home uses standard Android launcher APIs and is intended to work on Android phones from different manufacturers, including Nothing, Pixel, and Samsung devices.
+- **Verified device:** Nothing Phone 3a Lite running Nothing OS 4.x. Other brands and Android versions have not all been tested; drawer behavior, widgets, gestures, and launcher selection can vary by manufacturer.
+- **System tweaks are device-dependent.** The optional FEEL/DISPLAY tweaks require Shizuku and may not be supported on every Android build. The launcher works without Shizuku.
+
+## Features
+
+### Home screen
+
+- Multiple pages with drag-and-drop app placement
+- A compact dock fixed at the bottom, editable by dragging apps between the dock and Home
+- Drawer in GRID, LIST, or SMART mode
+- App labels, icon size, columns, icon packs, and monochrome icons
+- Clock with 12/24-hour format, battery status, or next alarm in the header
+- Android app widgets, plus a searchable widget picker
+- Swipe up for the drawer; optional gestures for notifications and screen-off
+
+### Optional system tools
+
+- FEEL and DISPLAY presets, density and font-scale controls, and a Quick Settings tile
+- Shizuku support for protected settings; no root required
 
 ## Permissions and privacy
 
-- The accessibility service only performs global actions: lock the screen and open the notification shade. It does not read screen content.
-- The app does not request the `INTERNET` permission.
-- Launcher settings, pinned apps, and widget IDs are stored locally on the device.
-- Shizuku is optional and is only used for protected system settings.
+- NotCustom does not request Internet access. Battery and next-alarm header options read on-device information.
+- Accessibility access is optional and used only for requested global actions such as opening notifications or locking the screen. It does not read screen content.
+- Shizuku is optional and used only for system-level tweaks.
+- Launcher preferences, app placements, and widget IDs are stored locally.
 
-## No root
+## Build from source
 
-NotCustom does not require root. It does not modify Nothing Launcher and does not add Glyph features.
+Requirements: JDK 17 and Android SDK Platform 34.
 
-## Project layout
+```bash
+git clone https://github.com/ddddaaaattttoooo/notcustom.git
+cd notcustom
+./gradlew assembleDebug
+```
 
-- `app/src/main/java/dev/notcustom/app/launcher/`: home screen, drawer, widgets, gestures, icon loading
-- `app/src/main/java/dev/notcustom/app/core/`: Shizuku, shell, tweaks, presets
-- `app/src/main/java/dev/notcustom/app/ui/`: tweaks app UI
-- `app/src/main/res/xml/accessibility_service_config.xml`: accessibility service configuration
+The APK is created under `app/build/outputs/apk/debug/`. Release builds are signed with the Android debug key for local testing; configure your own signing key before distributing a production build.
+
+## Help and contributions
+
+Found a bug? Open an issue on [GitHub](https://github.com/ddddaaaattttoooo/notcustom/issues) or [GitLab](https://gitlab.com/ddddaaaattttoooo/notcustom/-/issues). Please include your phone model, Android version, NotCustom version, and steps to reproduce. Don't include private logs or personal data.
+
+Merge requests and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the build and review workflow.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+NotCustom is released under the [MIT License](LICENSE).

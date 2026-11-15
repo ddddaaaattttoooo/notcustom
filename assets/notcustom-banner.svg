@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="title desc">
+  <title id="title">NotCustom</title>
+  <desc id="desc">NotCustom Android launcher — make home yours.</desc>
+  <rect width="1200" height="300" rx="30" fill="#111214"/>
+  <g fill="#f5f5f5">
+    <circle cx="142" cy="101" r="13"/><circle cx="194" cy="101" r="13"/><circle cx="246" cy="101" r="13"/>
+    <circle cx="142" cy="153" r="13"/><circle cx="246" cy="153" r="13"/>
+    <circle cx="142" cy="205" r="13"/><circle cx="194" cy="205" r="13"/><circle cx="246" cy="205" r="13"/>
+  </g>
+  <circle cx="194" cy="153" r="13" fill="#ed1c24"/>
+  <text x="310" y="157" fill="#f5f5f5" font-family="Arial, Helvetica, sans-serif" font-size="82" font-weight="700" letter-spacing="8">NOTCUSTOM</text>
+  <text x="316" y="215" fill="#b7b7bb" font-family="Arial, Helvetica, sans-serif" font-size="26" letter-spacing="3">MAKE HOME YOURS</text>
+  <rect x="932" y="194" width="176" height="46" rx="23" fill="#242528" stroke="#3c3d41"/>
+  <text x="1020" y="224" fill="#ed1c24" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" letter-spacing="2">ANDROID LAUNCHER</text>
+</svg>

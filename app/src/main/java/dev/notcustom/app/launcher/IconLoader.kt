@@ -7,6 +7,7 @@ import android.content.res.XmlResourceParser
 import android.os.Process
 import android.util.LruCache
 import android.util.Xml
+import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.graphics.drawable.toBitmap
@@ -17,6 +18,7 @@ import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
 import java.util.concurrent.ConcurrentHashMap
 
+@Immutable
 data class IconPackInfo(val packageName: String, val label: String)
 
 class IconLoader(context: Context) {

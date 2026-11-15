@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
@@ -54,8 +55,10 @@ import androidx.compose.ui.unit.dp
 import dev.notcustom.app.BuildConfig
 import dev.notcustom.app.MainActivity
 import dev.notcustom.app.launcher.LauncherApp
+import dev.notcustom.app.launcher.AtAGlanceStyle
 import dev.notcustom.app.launcher.LauncherState
 import dev.notcustom.app.launcher.LauncherViewModel
+import dev.notcustom.app.launcher.MAX_HOME_PAGES
 import dev.notcustom.app.launcher.homeRoleIntent
 import dev.notcustom.app.launcher.homeSettingsIntent
 import dev.notcustom.app.ui.theme.Ink
@@ -84,7 +87,7 @@ fun AppMenuSheet(
             value = viewModel.loadIcon(app)
         }
         val pinned = state.pinned.contains(app.component)
-        val inDock = state.dock.contains(app.component)
+        var movePageMenuOpen by remember { mutableStateOf(false) }
 
         Column(
             Modifier
@@ -113,8 +116,25 @@ fun AppMenuSheet(
             MenuAction(if (pinned) "REMOVE FROM HOME" else "ADD TO HOME") {
                 if (pinned) viewModel.unpin(app) else viewModel.pin(app)
             }
-            MenuAction(if (inDock) "REMOVE FROM DOCK" else "ADD TO DOCK") {
-                if (inDock) viewModel.removeDock(app) else viewModel.addDock(app)
+            Box {
+                MenuAction(if (pinned) "MOVE TO PAGE" else "ADD TO PAGE") {
+                    movePageMenuOpen = true
+                }
+                DropdownMenu(
+                    expanded = movePageMenuOpen,
+                    onDismissRequest = { movePageMenuOpen = false }
+                ) {
+                    repeat(state.pageCount) { page ->
+                        DropdownMenuItem(
+                            text = { Text("PAGE ${page + 1}") },
+                            onClick = {
+                                movePageMenuOpen = false
+                                if (pinned) viewModel.moveToPage(app, page)
+                                else viewModel.addToPage(app, page)
+                            }
+                        )
+                    }
+                }
             }
             MenuAction("HOME SETTINGS") {
                 viewModel.dismissMenu()
@@ -146,7 +166,7 @@ private fun MenuAction(label: String, onClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeMenuSheet(viewModel: LauncherViewModel) {
+fun HomeMenuSheet(state: LauncherState, viewModel: LauncherViewModel) {
     val context = LocalContext.current
     ModalBottomSheet(
         onDismissRequest = viewModel::closeHomeMenu,
@@ -168,6 +188,13 @@ fun HomeMenuSheet(viewModel: LauncherViewModel) {
             }
             Spacer(Modifier.height(8.dp))
             MenuAction("ADD WIDGET") { viewModel.openWidgetPicker() }
+            MenuAction("ADD PAGE") { viewModel.addPage() }
+            if (state.pageCount > 1) {
+                MenuAction("REMOVE PAGE") { viewModel.removeCurrentPage() }
+            }
+            MenuAction(
+                if (state.config.showLabels) "HIDE APP NAMES" else "SHOW APP NAMES"
+            ) { viewModel.setShowLabels(!state.config.showLabels) }
             MenuAction("WALLPAPER & STYLE") {
                 viewModel.closeHomeMenu()
                 runCatching {
@@ -312,7 +339,29 @@ fun LauncherSettingsSheet(
                 steps = 9
             ) { viewModel.setIconSize(it.roundToInt()) }
 
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("HOME PAGES", style = MaterialTheme.typography.labelSmall, color = Muted)
+                    Text(
+                        "${state.pageCount} total  ·  page ${state.currentPage + 1}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Paper
+                    )
+                }
+                PageSheetButton("−", enabled = state.pageCount > 1) {
+                    viewModel.removeCurrentPage()
+                }
+                Spacer(Modifier.width(8.dp))
+                PageSheetButton("+", enabled = state.pageCount < MAX_HOME_PAGES) {
+                    viewModel.addPage()
+                }
+            }
+
             var iconPackMenuOpen by remember { mutableStateOf(false) }
+            var atAGlanceMenuOpen by remember { mutableStateOf(false) }
             val selectedPackLabel = state.iconPacks
                 .firstOrNull { it.packageName == state.iconPack }
                 ?.label ?: "SYSTEM DEFAULT"
@@ -363,8 +412,54 @@ fun LauncherSettingsSheet(
                 }
             }
 
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("AT A GLANCE", style = MaterialTheme.typography.labelSmall, color = Muted)
+                    Text(
+                        when (state.config.atAGlanceStyle) {
+                            AtAGlanceStyle.CLOCK -> "CLOCK + DATE"
+                            AtAGlanceStyle.BATTERY -> "BATTERY STATUS"
+                            AtAGlanceStyle.NEXT_ALARM -> "NEXT ALARM"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Paper
+                    )
+                }
+                Box {
+                    OutlinedButton(
+                        onClick = { atAGlanceMenuOpen = true },
+                        shape = RoundedCornerShape(50),
+                        border = BorderStroke(1.dp, Line)
+                    ) {
+                        Text("CHANGE", style = MaterialTheme.typography.labelSmall)
+                    }
+                    DropdownMenu(
+                        expanded = atAGlanceMenuOpen,
+                        onDismissRequest = { atAGlanceMenuOpen = false }
+                    ) {
+                        listOf(
+                            AtAGlanceStyle.CLOCK to "CLOCK + DATE",
+                            AtAGlanceStyle.BATTERY to "BATTERY STATUS",
+                            AtAGlanceStyle.NEXT_ALARM to "NEXT ALARM"
+                        ).forEach { (style, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    atAGlanceMenuOpen = false
+                                    viewModel.setAtAGlanceStyle(style)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
             SwitchRow("APP LABELS", state.config.showLabels) { viewModel.setShowLabels(it) }
             SwitchRow("SEARCH BAR", state.config.showSearch) { viewModel.setShowSearch(it) }
+            SwitchRow("24-HOUR CLOCK", state.config.use24HourClock) { viewModel.setUse24HourClock(it) }
             SwitchRow("MONOCHROME ICONS", state.config.monochrome) { viewModel.setMonochrome(it) }
 
             Spacer(Modifier.height(18.dp))
@@ -487,6 +582,20 @@ fun LauncherSettingsSheet(
                 color = Muted
             )
         }
+    }
+}
+
+@Composable
+private fun PageSheetButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        shape = CircleShape,
+        border = BorderStroke(1.dp, Line),
+        contentPadding = PaddingValues(0.dp),
+        modifier = Modifier.size(38.dp)
+    ) {
+        Text(label, style = MaterialTheme.typography.titleMedium)
     }
 }
 
