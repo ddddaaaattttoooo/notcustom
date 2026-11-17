@@ -124,6 +124,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
     val visibleApps = remember(state.apps, state.hidden) {
         state.apps.filter { it.packageName !in state.hidden }
     }
+    val iconKey = state.iconPack.orEmpty() + "#" + state.iconRevision
     val returningKey = state.returning?.app?.key
     val context = LocalContext.current
     val dropBounds = remember { mutableMapOf<HomeDropAction, Rect>() }
@@ -389,7 +390,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 viewModel = viewModel,
                 returningKey = returningKey,
                 pinPositions = state.pinPositions,
-                iconPackKey = state.iconPack,
+                iconPackKey = iconKey,
                 pageCount = state.pageCount,
                 currentPage = state.currentPage,
                 slotBounds = homeSlotBounds,
@@ -478,7 +479,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 pinPositions = state.pinPositions,
                 config = state.config,
                 viewModel = viewModel,
-                iconPackKey = state.iconPack,
+                iconPackKey = iconKey,
                 slotBounds = dockSlotBounds,
                 highlightDockIndex = drawerDrag?.takeIf { it.active }?.hoverDockSlot?.takeIf { it >= 0 },
                 homeDrag = homeDrag,
@@ -623,14 +624,14 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
             if (direction != 0) {
                 EdgeDropIndicator(direction, state.currentPage, state.pageCount)
             }
-            DrawerDragGhost(drag, state.config, viewModel, state.iconPack)
+            DrawerDragGhost(drag, state.config, viewModel, iconKey)
         }
 
         homeDrag?.let { drag ->
             HomeDropBar(drag.actions, drag.actionTarget) { action, rect ->
                 dropBounds[action] = rect
             }
-            HomeDragGhost(drag, state.config, viewModel, state.iconPack)
+            HomeDragGhost(drag, state.config, viewModel, iconKey)
         }
 
         widgetDrag?.let { drag ->
@@ -645,7 +646,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
 
 
         state.returning?.let { transition ->
-            ReturnGhost(transition, rootSize, viewModel, state.iconPack)
+            ReturnGhost(transition, rootSize, viewModel, iconKey)
         }
 
         state.menuApp?.let { app ->

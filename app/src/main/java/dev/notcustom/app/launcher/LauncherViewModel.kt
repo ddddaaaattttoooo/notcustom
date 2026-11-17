@@ -68,6 +68,7 @@ data class LauncherState(
     val widgetPickerOpen: Boolean = false,
     val widgetPickerPackage: String? = null,
     val widgetConfigRequest: Intent? = null,
+    val iconRevision: Int = 0,
     val accessibilityEnabled: Boolean = false,
     val returning: ReturnTransition? = null,
     val update: UpdateState = UpdateState(),
@@ -196,7 +197,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         config = config,
                         drawerMode = prefs.drawerMode,
                         iconPacks = iconPacks,
-                        iconPack = iconPack
+                        iconPack = iconPack,
+                        iconRevision = it.iconRevision + 1
                     )
                 }
                 val byComponent = primaryByComponent(apps)
@@ -209,7 +211,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         loading = false,
                         widgets = widgets,
                         iconPacks = iconPacks,
-                        iconPack = iconPack
+                        iconPack = iconPack,
+                        iconRevision = it.iconRevision + 1
                     )
                 }
             }
@@ -1230,19 +1233,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun shortcuts(app: LauncherApp): List<ShortcutInfo> = runCatching {
-        val query = LauncherApps.ShortcutQuery()
-            .setQueryFlags(
-                LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC or
-                    LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST or
-                    LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED
-            )
-            .setPackage(app.packageName)
-            .setActivity(app.component)
-        launcherApps.getShortcuts(query, app.user).orEmpty()
-    }.getOrDefault(emptyList())
-        .filter { it.isEnabled }
-        .take(4)
+    suspend fun shortcuts(app: LauncherApp): List<ShortcutInfo> = withContext(Dispatchers.IO) {
+        runCatching {
+            val query = LauncherApps.ShortcutQuery()
+                .setQueryFlags(
+                    LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC or
+                        LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST or
+                        LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED
+                )
+                .setPackage(app.packageName)
+                .setActivity(app.component)
+            launcherApps.getShortcuts(query, app.user).orEmpty()
+        }.getOrDefault(emptyList())
+            .filter { it.isEnabled }
+            .take(4)
+    }
 
     suspend fun shortcutIcon(shortcut: ShortcutInfo): ImageBitmap? = withContext(Dispatchers.IO) {
         val density = getApplication<Application>().resources.displayMetrics.densityDpi
