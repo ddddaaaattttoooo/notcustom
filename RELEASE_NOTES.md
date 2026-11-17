@@ -1,3 +1,11 @@
+## NotCustom 0.3.23-beta
+
+- Release APKs now use a stable signing key, so updates install over older versions instead of failing with a package conflict
+- SMART drawer puts TBC, BOG, and Keepz under Finance
+- Taobao, Pinduoduo, 1688, Goofish, Trendyol, AliExpress, Alibaba.com, and KiwiPost go under Shopping
+- Steam goes under Games
+- Category matching now checks package IDs and localized labels, so Chinese-named shopping apps no longer fall into Other
+
 ## NotCustom 0.3.22-beta
 
 - Widgets bind reliably on any phone: if the system needs permission, the standard bind prompt appears, then the widget's configuration screen still opens

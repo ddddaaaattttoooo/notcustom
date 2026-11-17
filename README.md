@@ -5,7 +5,7 @@
 <p align="center">ANDROID 12+ &nbsp;•&nbsp; NO ROOT &nbsp;•&nbsp; MIT LICENSE</p>
 
 <p align="center">
-  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.22-beta"><img alt="Download NotCustom 0.3.22-beta" src="https://img.shields.io/badge/Download-NotCustom%200.3.22--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
+  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.23-beta"><img alt="Download NotCustom 0.3.23-beta" src="https://img.shields.io/badge/Download-NotCustom%200.3.23--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
 </p>
 
 NotCustom is an Android launcher with a flexible Home screen, app drawer, widgets, and optional Shizuku-powered system tweaks. It takes visual inspiration from Nothing OS while keeping Nothing Launcher intact.
@@ -16,7 +16,7 @@ NotCustom is an Android launcher with a flexible Home screen, app drawer, widget
 
 ### Download the APK
 
-Download the APK from [GitHub Releases](https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.22-beta).
+Download the APK from [GitHub Releases](https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.23-beta).
 
 ### Install on your phone
 

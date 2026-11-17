@@ -1552,6 +1552,30 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         ) {
             return "System"
         }
+        val pkg = packageName.lowercase()
+        fun pkgIs(vararg prefixes: String) =
+            prefixes.any { pkg == it || pkg.startsWith("$it.") }
+        if (pkgIs("ge.bog.mobilebank", "com.icomvision.bsc.tbc") ||
+            pkg.contains("keepz") ||
+            label.equals("BOG", ignoreCase = true) ||
+            label.startsWith("TBC Bank", ignoreCase = true) ||
+            label.contains("Keepz", ignoreCase = true)
+        ) {
+            return "Finance"
+        }
+        if (pkgIs(
+                "com.taobao", "com.tmall", "com.jingdong", "com.xunmeng.pinduoduo",
+                "com.alibaba.wireless", "com.alibaba.aliexpresshd",
+                "com.alibaba.intl.android.apps.poseidon"
+            ) || pkg == "trendyol.com" || pkg.startsWith("trendyol.") ||
+            pkg.contains("kiwipost") || label.contains("KiwiPost", ignoreCase = true) ||
+            has("淘宝", "天猫", "京东", "拼多多", "闲鱼", "1688")
+        ) {
+            return "Shopping"
+        }
+        if (pkgIs("com.valvesoftware") || label.equals("Steam", ignoreCase = true)) {
+            return "Games"
+        }
         return when (info.category) {
             ApplicationInfo.CATEGORY_SOCIAL -> "Social"
             ApplicationInfo.CATEGORY_GAME -> "Games"
@@ -1568,7 +1592,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     "threads", "mastodon", "social") -> "Social"
                 has("bank", "wallet", "pay", "finance", "revolut", "monzo", "cash") -> "Finance"
                 has("shop", "store", "amazon", "ebay", "etsy", "retail", "marketplace",
-                    "allegro") -> "Shopping"
+                    "allegro", "taobao", "tmall", "jingdong", "pinduoduo", "aliexpress",
+                    "trendyol", "idlefish", "goofish", "alibaba", "1688",
+                    "淘宝", "天猫", "京东", "拼多多", "闲鱼") -> "Shopping"
                 has("maps", "navigation", "travel", "uber", "bolt", "transit", "booking",
                     "airline", "flight", "train") -> "Travel"
                 has("camera", "photo", "gallery", "lens", "scanner") -> "Photography"
@@ -1578,7 +1604,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     "utility", "vpn", "keyboard", "tools") -> "Tools"
                 has("youtube", "music", "spotify", "video", "netflix", "podcast", "tv",
                     "player", "audio") -> "Entertainment"
-                has("game") -> "Games"
+                has("game", "steam") -> "Games"
                 else -> "Other"
             }
         }
