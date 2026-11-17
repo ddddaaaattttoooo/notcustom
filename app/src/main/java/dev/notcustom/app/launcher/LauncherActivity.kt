@@ -1,6 +1,7 @@
 package dev.notcustom.app.launcher
 
 import android.content.Intent
+import android.content.pm.LauncherApps
 import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -53,6 +54,10 @@ class LauncherActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        if (intent?.action == LauncherApps.ACTION_CONFIRM_PIN_APPWIDGET) {
+            viewModel.handlePinRequest(intent)
+            return
+        }
         if (intent?.getBooleanExtra(EXTRA_OPEN_SETTINGS, false) == true) {
             viewModel.openSettings()
         }

@@ -2,15 +2,20 @@ package dev.notcustom.app.launcher
 
 import android.appwidget.AppWidgetProviderInfo
 import android.content.ComponentName
+import android.os.Process
+import android.os.UserHandle
 import androidx.compose.runtime.Immutable
 
 @Immutable
 data class LauncherApp(
     val component: ComponentName,
     val label: String,
-    val packageName: String
+    val packageName: String,
+    val user: UserHandle = Process.myUserHandle(),
+    val category: String = "Other",
+    val system: Boolean = false
 ) {
-    val key: String get() = component.flattenToString()
+    val key: String get() = "${component.flattenToString()}#${user.hashCode()}"
 }
 
 data class WidgetChoice(

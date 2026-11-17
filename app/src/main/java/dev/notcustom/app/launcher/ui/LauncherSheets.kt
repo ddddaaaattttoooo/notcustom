@@ -1,11 +1,13 @@
 package dev.notcustom.app.launcher.ui
 
 import android.content.Intent
+import android.content.pm.ShortcutInfo
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -152,7 +154,50 @@ fun AppMenuSheet(
             if (viewModel.canUninstall(app)) {
                 MenuAction("UNINSTALL") { viewModel.uninstall(app) }
             }
+            val shortcuts by produceState(
+                initialValue = emptyList<ShortcutInfo>(),
+                app.key
+            ) {
+                value = viewModel.shortcuts(app)
+            }
+            if (shortcuts.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text("SHORTCUTS", style = MaterialTheme.typography.labelSmall, color = Muted)
+                Spacer(Modifier.height(4.dp))
+                shortcuts.forEach { shortcut ->
+                    ShortcutRow(app, shortcut, viewModel)
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun ShortcutRow(
+    app: LauncherApp,
+    shortcut: ShortcutInfo,
+    viewModel: LauncherViewModel
+) {
+    val icon by produceState<ImageBitmap?>(initialValue = null, app.key, shortcut.id) {
+        value = viewModel.shortcutIcon(shortcut)
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable { viewModel.launchShortcut(app, shortcut) }
+            .padding(horizontal = 6.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AppIcon(icon, 30, false)
+        Spacer(Modifier.width(12.dp))
+        Text(
+            shortcut.shortLabel?.toString()?.takeIf { it.isNotBlank() }
+                ?: shortcut.longLabel?.toString().orEmpty(),
+            style = MaterialTheme.typography.bodySmall,
+            color = Paper,
+            maxLines = 1
+        )
     }
 }
 

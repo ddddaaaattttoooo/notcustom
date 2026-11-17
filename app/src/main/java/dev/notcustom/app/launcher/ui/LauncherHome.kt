@@ -1,5 +1,6 @@
 package dev.notcustom.app.launcher.ui
 
+import android.app.WallpaperManager
 import android.graphics.Rect
 import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetProviderInfo
@@ -9,16 +10,10 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -57,6 +52,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -73,6 +69,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToUp
@@ -101,7 +98,10 @@ import dev.notcustom.app.launcher.LauncherViewModel
 import dev.notcustom.app.launcher.ReturnTransition
 import dev.notcustom.app.ui.theme.Muted
 import dev.notcustom.app.ui.theme.NothingRed
+import androidx.core.graphics.drawable.toBitmap
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
@@ -109,7 +109,11 @@ import kotlin.math.roundToInt
 @Composable
 fun LauncherRoot(viewModel: LauncherViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val appsByComponent = remember(state.apps) { state.apps.associateBy { it.component } }
+    val appsByComponent = remember(state.apps) {
+        state.apps.groupBy { it.component }.mapValues { (_, list) ->
+            list.firstOrNull { it.user == android.os.Process.myUserHandle() } ?: list.first()
+        }
+    }
     val pinned = remember(state.pinned, state.pinPositions, appsByComponent) {
         state.pinned.mapNotNull { appsByComponent[it] }
             .sortedBy { state.pinPositions[it.component] ?: Int.MAX_VALUE }
@@ -123,17 +127,24 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
     val returningKey = state.returning?.app?.key
     val context = LocalContext.current
     val dropBounds = remember { mutableMapOf<HomeDropAction, Rect>() }
+    var pagerOffset by remember { mutableFloatStateOf(0f) }
+    val wallpaper by produceState<ImageBitmap?>(initialValue = null) {
+        value = withContext(Dispatchers.IO) { loadWallpaper(context) }
+    }
 
     val widgetConfig = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        viewModel.onWidgetConfigured(result.resultCode)
+        viewModel.onWidgetResult(result.resultCode, result.data)
     }
     val installWidget: (AppWidgetProviderInfo) -> Unit = { info ->
-        val intent = viewModel.prepareWidget(info)
-        if (intent != null) {
+        viewModel.prepareWidget(info)
+    }
+    LaunchedEffect(state.widgetConfigRequest) {
+        state.widgetConfigRequest?.let { intent ->
             runCatching { widgetConfig.launch(intent) }
                 .onFailure { viewModel.onWidgetConfigFailed() }
+            viewModel.clearWidgetConfigRequest()
         }
     }
 
@@ -158,7 +169,10 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
     val homeEditing = homeDrag != null || widgetDrag != null
     val homeScale by animateFloatAsState(
         targetValue = if (homeEditing) 0.88f else 1f,
-        animationSpec = tween(180),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
         label = "homeEditScale"
     )
     val edgeThreshold = with(density) { 64.dp.toPx() }
@@ -293,6 +307,23 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 )
             }
     ) {
+        if (wallpaper != null) {
+            Image(
+                bitmap = wallpaper!!,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        if (state.pageCount > 1) {
+                            val fraction = (pagerOffset / (state.pageCount - 1)).coerceIn(0f, 1f)
+                            translationX = -(fraction - 0.5f) * size.width * 0.10f
+                        }
+                        scaleX = 1.06f
+                        scaleY = 1.06f
+                    }
+            )
+        }
         Box(
             Modifier
                 .fillMaxSize()
@@ -362,6 +393,9 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 pageCount = state.pageCount,
                 currentPage = state.currentPage,
                 slotBounds = homeSlotBounds,
+                drawerHoverSlot = drawerDrag?.takeIf { it.active }?.hoverSlot?.takeIf { it >= 0 },
+                showSlotDots = drawerDrag?.active == true,
+                onPageOffset = { pagerOffset = it },
                 homeDrag = homeDrag,
                 onHomeDragStart = { app, page, origin ->
                     homeDrag = HomeDrag(app, origin, page, homeDropActions(viewModel, app))
@@ -446,6 +480,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 viewModel = viewModel,
                 iconPackKey = state.iconPack,
                 slotBounds = dockSlotBounds,
+                highlightDockIndex = drawerDrag?.takeIf { it.active }?.hoverDockSlot?.takeIf { it >= 0 },
                 homeDrag = homeDrag,
                 onDragStart = { app, origin ->
                     homeDrag = HomeDrag(app, origin, state.currentPage, homeDropActions(viewModel, app))
@@ -496,16 +531,20 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
             )
         }
 
-        AnimatedVisibility(
-            visible = state.drawerOpen,
-            enter = slideInVertically(
-                initialOffsetY = { it },
-                animationSpec = tween(260, easing = FastOutSlowInEasing)
-            ) + fadeIn(tween(150)),
-            exit = slideOutVertically(
-                targetOffsetY = { it },
-                animationSpec = tween(200, easing = FastOutSlowInEasing)
-            ) + fadeOut(tween(120))
+        val drawerHiddenOffset =
+            if (rootSize.height > 0) rootSize.height.toFloat() + 240f else 10000f
+        val drawerSlide by animateFloatAsState(
+            targetValue = if (state.drawerOpen) 0f else drawerHiddenOffset,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            ),
+            label = "drawerSlide"
+        )
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer { translationY = drawerSlide }
         ) {
             AppDrawer(
                 visibleApps,
@@ -520,6 +559,18 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                         drag.offset += delta
                         if (!drag.active && drag.offset.getDistance() > swipeThreshold * 0.25f) {
                             drag.active = true
+                        }
+                        if (drag.active) {
+                            val x = drag.origin.exactCenterX() + drag.offset.x
+                            val y = drag.origin.exactCenterY() + drag.offset.y
+                            val pageSize = state.config.columns * HOME_ROWS
+                            drag.hoverDockSlot = dockSlotBounds.entries.firstOrNull {
+                                it.value.contains(x.roundToInt(), y.roundToInt())
+                            }?.key ?: -1
+                            drag.hoverSlot = homeSlotBounds.entries.firstOrNull {
+                                it.key / pageSize == state.currentPage &&
+                                    it.value.contains(x.roundToInt(), y.roundToInt())
+                            }?.key ?: -1
                         }
                     }
                 },
@@ -610,7 +661,14 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
         }
 
         if (state.widgetPickerOpen) {
-            WidgetPickerSheet(state, viewModel, installWidget)
+            WidgetPickerSheet(
+                state = state,
+                viewModel = viewModel,
+                onInstall = installWidget,
+                slotBounds = homeSlotBounds,
+                page = state.currentPage,
+                columns = state.config.columns
+            )
         }
     }
 }
@@ -623,6 +681,7 @@ private fun DockRow(
     viewModel: LauncherViewModel,
     iconPackKey: String?,
     slotBounds: MutableMap<Int, Rect>,
+    highlightDockIndex: Int?,
     homeDrag: HomeDrag?,
     onDragStart: (LauncherApp, Rect) -> Unit,
     onDrag: (Offset) -> Unit,
@@ -662,9 +721,14 @@ private fun DockRow(
                 contentAlignment = Alignment.Center
             ) {
                 if (app == null) {
-                    if (homeDrag != null) {
+                    if (homeDrag != null || highlightDockIndex == index) {
+                        val active = highlightDockIndex == index
                         Box(
-                            Modifier.fillMaxSize().border(1.dp, NothingRed.copy(alpha = .45f), RoundedCornerShape(16.dp)),
+                            Modifier.fillMaxSize().border(
+                                if (active) 2.dp else 1.dp,
+                                if (active) NothingRed else NothingRed.copy(alpha = .45f),
+                                RoundedCornerShape(16.dp)
+                            ),
                             contentAlignment = Alignment.Center
                         ) {
                             DotGlyph(Modifier.size(14.dp), tint = Color.White.copy(alpha = .1f))
@@ -710,6 +774,9 @@ private fun HomePager(
     pageCount: Int,
     currentPage: Int,
     slotBounds: MutableMap<Int, Rect>,
+    drawerHoverSlot: Int?,
+    showSlotDots: Boolean,
+    onPageOffset: (Float) -> Unit,
     homeDrag: HomeDrag?,
     onHomeDragStart: (LauncherApp, Int, Rect) -> Unit,
     onHomeDrag: (Offset) -> Unit,
@@ -724,6 +791,10 @@ private fun HomePager(
     )
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.currentPage }.collect { viewModel.setCurrentPage(it) }
+    }
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.currentPage + pagerState.currentPageOffsetFraction }
+            .collect(onPageOffset)
     }
     LaunchedEffect(currentPage, safeCount) {
         val target = currentPage.coerceIn(0, safeCount - 1)
@@ -753,6 +824,8 @@ private fun HomePager(
                 pinPositions = pinPositions,
                 iconPackKey = iconPackKey,
                 slotBounds = slotBounds,
+                drawerHoverSlot = drawerHoverSlot,
+                showSlotDots = showSlotDots,
                 pageCount = safeCount,
                 homeDrag = homeDrag,
                 onHomeDragStart = onHomeDragStart,
@@ -787,6 +860,8 @@ private fun HomePage(
     pinPositions: Map<android.content.ComponentName, Int>,
     iconPackKey: String?,
     slotBounds: MutableMap<Int, Rect>,
+    drawerHoverSlot: Int?,
+    showSlotDots: Boolean,
     homeDrag: HomeDrag?,
     onHomeDragStart: (LauncherApp, Int, Rect) -> Unit,
     onHomeDrag: (Offset) -> Unit,
@@ -823,7 +898,8 @@ private fun HomePage(
             items(config.columns * HOME_GRID_ROWS, key = { "home-slot-${pageStart + it}" }) { offset ->
                 val slot = pageStart + offset
                 val app = appsBySlot[slot]
-                val isDropTarget = homeDrag?.hoverSlot == slot && homeDrag.app.key != app?.key
+                val isDropTarget = (homeDrag?.hoverSlot == slot && homeDrag.app.key != app?.key) ||
+                    drawerHoverSlot == slot
                 DisposableEffect(slot) { onDispose { slotBounds.remove(slot) } }
                 Box(Modifier.fillMaxWidth().height(slotHeight)
                     .then(if (isDropTarget) Modifier.border(2.dp, NothingRed, RoundedCornerShape(18.dp)) else Modifier)
@@ -831,7 +907,13 @@ private fun HomePage(
                     contentAlignment = Alignment.Center) {
                     if (app == null) {
                         Box(Modifier.fillMaxWidth().height(slotHeight), contentAlignment = Alignment.Center) {
-                            if (homeDrag != null) DotGlyph(Modifier.size(18.dp), tint = Color.White.copy(alpha = .10f), center = NothingRed.copy(alpha = .20f))
+                            if (homeDrag != null || showSlotDots) {
+                                DotGlyph(
+                                    Modifier.size(18.dp),
+                                    tint = Color.White.copy(alpha = .10f),
+                                    center = NothingRed.copy(alpha = .20f)
+                                )
+                            }
                         }
                     } else {
                         AppCell(app, config, viewModel, modifier = Modifier.fillMaxWidth(), showLabel = config.showLabels,
@@ -1171,6 +1253,8 @@ private fun WidgetView(
 private class DrawerDrag(val app: LauncherApp, val origin: Rect) {
     var offset by mutableStateOf(Offset.Zero)
     var active by mutableStateOf(false)
+    var hoverSlot by mutableIntStateOf(-1)
+    var hoverDockSlot by mutableIntStateOf(-1)
 }
 
 @Composable
@@ -1223,7 +1307,10 @@ private fun ReturnGhost(
         progress.snapTo(0f)
         progress.animateTo(
             1f,
-            tween(durationMillis = 260, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f))
+            spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            )
         )
     }
     val bounds = transition.bounds
@@ -1260,3 +1347,14 @@ private fun ReturnGhost(
         }
     }
 }
+
+
+private fun loadWallpaper(context: android.content.Context): ImageBitmap? = runCatching {
+    val manager = WallpaperManager.getInstance(context)
+    val drawable = manager.drawable ?: return@runCatching null
+    val metrics = context.resources.displayMetrics
+    drawable.toBitmap(
+        width = metrics.widthPixels.coerceAtMost(1440),
+        height = metrics.heightPixels.coerceAtMost(3200)
+    ).asImageBitmap()
+}.getOrNull()

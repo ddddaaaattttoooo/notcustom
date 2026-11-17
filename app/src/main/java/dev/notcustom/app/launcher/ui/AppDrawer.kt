@@ -1,11 +1,13 @@
 package dev.notcustom.app.launcher.ui
 
 import android.graphics.Rect
+import android.os.SystemClock
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,16 +18,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items as listItems
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -37,39 +39,46 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import dev.notcustom.app.launcher.DrawerMode
 import dev.notcustom.app.launcher.LauncherApp
 import dev.notcustom.app.launcher.LauncherState
 import dev.notcustom.app.launcher.LauncherViewModel
-import dev.notcustom.app.launcher.DrawerMode
-import dev.notcustom.app.ui.theme.Muted
-import dev.notcustom.app.ui.theme.Paper
 import dev.notcustom.app.ui.theme.Line
+import dev.notcustom.app.ui.theme.Muted
 import dev.notcustom.app.ui.theme.NothingRed
+import dev.notcustom.app.ui.theme.Paper
 import dev.notcustom.app.ui.theme.Surface0
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.style.TextOverflow
+import kotlin.math.roundToInt
 
 @Composable
 fun AppDrawer(
@@ -89,6 +98,9 @@ fun AppDrawer(
             apps.filter { it.label.contains(state.search, ignoreCase = true) }
         }
     }
+    var openFolder by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.drawerOpen) { if (!state.drawerOpen) openFolder = null }
+    BackHandler(enabled = openFolder != null) { openFolder = null }
     val gridState = rememberLazyGridState()
     val listState = rememberLazyListState()
     val dismissThreshold = with(LocalDensity.current) { 72.dp.toPx() }
@@ -123,140 +135,122 @@ fun AppDrawer(
             .fillMaxSize()
             .graphicsLayer { alpha = if (dragActive) 0f else 1f }
     ) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 18.dp)
-        ) {
-            Box(
+        Box(Modifier.fillMaxSize()) {
+            Column(
                 Modifier
-                    .fillMaxWidth()
-                    .pointerInput(dismissThreshold, viewModel) {
-                        var headerPull = 0f
-                        detectVerticalDragGestures(
-                            onDragStart = { headerPull = 0f },
-                            onVerticalDrag = { _, dragAmount ->
-                                headerPull += dragAmount
-                                if (headerPull > dismissThreshold) {
-                                    headerPull = 0f
-                                    viewModel.pullDownFromDrawer()
-                                }
-                            }
-                        )
-                    }
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 18.dp)
             ) {
-                Column {
-                    Spacer(Modifier.height(12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SearchField(state.search, viewModel::setSearch, Modifier.weight(1f))
-                        Spacer(Modifier.width(8.dp))
-                        TextButton(onClick = viewModel::closeDrawer) {
-                            Text(
-                                "CLOSE",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Muted
-                            )
-                        }
-                        TextButton(onClick = {
-                            viewModel.closeDrawer()
-                            viewModel.openSettings()
-                        }) {
-                            Text(
-                                "SETTINGS",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Muted
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(2.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        DrawerMode.entries.forEach { mode ->
-                            ModeChip(
-                                mode,
-                                state.drawerMode == mode,
-                                Modifier.weight(1f)
-                            ) { viewModel.setDrawerMode(mode) }
-                        }
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Long-press and drag onto Home. Long-press without moving for options.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Muted
-                    )
-                    Spacer(Modifier.height(10.dp))
-                }
-            }
-            if (filtered.isEmpty()) {
-                var emptyPull by remember { mutableFloatStateOf(0f) }
                 Box(
                     Modifier
-                        .weight(1f)
                         .fillMaxWidth()
                         .pointerInput(dismissThreshold, viewModel) {
+                            var headerPull = 0f
                             detectVerticalDragGestures(
-                                onDragStart = { emptyPull = 0f },
+                                onDragStart = { headerPull = 0f },
                                 onVerticalDrag = { _, dragAmount ->
-                                    emptyPull += dragAmount
-                                    if (emptyPull > dismissThreshold) {
-                                        emptyPull = 0f
+                                    headerPull += dragAmount
+                                    if (headerPull > dismissThreshold) {
+                                        headerPull = 0f
                                         viewModel.pullDownFromDrawer()
                                     }
                                 }
                             )
-                        },
-                    contentAlignment = Alignment.Center
+                        }
                 ) {
-                    Text(
-                        "No apps found",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Muted,
-                        textAlign = TextAlign.Center
-                    )
+                    Column {
+                        Spacer(Modifier.height(12.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            SearchField(state.search, viewModel::setSearch, Modifier.weight(1f))
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(onClick = viewModel::closeDrawer) {
+                                Text(
+                                    "CLOSE",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Muted
+                                )
+                            }
+                            TextButton(onClick = {
+                                viewModel.closeDrawer()
+                                viewModel.openSettings()
+                            }) {
+                                Text(
+                                    "SETTINGS",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Muted
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(2.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            DrawerMode.entries.forEach { mode ->
+                                ModeChip(
+                                    mode,
+                                    state.drawerMode == mode,
+                                    Modifier.weight(1f)
+                                ) { viewModel.setDrawerMode(mode) }
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Long-press and drag onto Home. Long-press without moving for options.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Muted
+                        )
+                        Spacer(Modifier.height(10.dp))
+                    }
                 }
-            } else {
-                when (state.drawerMode) {
-                    DrawerMode.LIST -> LazyColumn(
-                        modifier = Modifier.weight(1f).nestedScroll(pullDownToExit),
-                        state = listState,
-                        contentPadding = PaddingValues(bottom = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                if (filtered.isEmpty()) {
+                    var emptyPull by remember { mutableFloatStateOf(0f) }
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .pointerInput(dismissThreshold, viewModel) {
+                                detectVerticalDragGestures(
+                                    onDragStart = { emptyPull = 0f },
+                                    onVerticalDrag = { _, dragAmount ->
+                                        emptyPull += dragAmount
+                                        if (emptyPull > dismissThreshold) {
+                                            emptyPull = 0f
+                                            viewModel.pullDownFromDrawer()
+                                        }
+                                    }
+                                )
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
-                        listItems(filtered, key = { it.key }, contentType = { "app" }) { app ->
-                            DrawerListRow(app, viewModel, state.iconPack)
-                        }
+                        Text(
+                            "No apps found",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Muted,
+                            textAlign = TextAlign.Center
+                        )
                     }
-                    DrawerMode.GRID -> LazyVerticalGrid(
-                        columns = GridCells.Fixed(state.config.columns),
-                        modifier = Modifier.weight(1f).nestedScroll(pullDownToExit),
-                        state = gridState,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        contentPadding = PaddingValues(bottom = 16.dp)
-                    ) {
-                        gridItems(filtered, key = { it.key }, contentType = { "app" }) { app ->
-                            AppCell(
-                                app,
-                                state.config,
-                                viewModel,
-                                showLabel = state.config.showLabels,
-                                fromHome = false,
-                                dragEnabled = true,
-                                iconPackKey = state.iconPack,
-                                onDragStart = { bounds ->
-                                    bounds?.let { onAppDragStart?.invoke(app, it) }
-                                },
-                                onDrag = { onAppDrag?.invoke(it) },
-                                onDragEnd = { onAppDragEnd?.invoke() },
-                                onDragCancel = { onAppDragCancel?.invoke() }
-                            )
+                } else {
+                    when (state.drawerMode) {
+                        DrawerMode.LIST -> LazyColumn(
+                            modifier = Modifier.weight(1f).nestedScroll(pullDownToExit),
+                            state = listState,
+                            contentPadding = PaddingValues(bottom = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listItems(filtered, key = { it.key }, contentType = { "app" }) { app ->
+                                DrawerListRow(
+                                    app = app,
+                                    viewModel = viewModel,
+                                    iconPackKey = state.iconPack,
+                                    onDragStart = { a, bounds -> onAppDragStart?.invoke(a, bounds) },
+                                    onDrag = { onAppDrag?.invoke(it) },
+                                    onDragEnd = { onAppDragEnd?.invoke() },
+                                    onDragCancel = { onAppDragCancel?.invoke() }
+                                )
+                            }
                         }
-                    }
-                    DrawerMode.SMART -> {
-                        val groups = remember(filtered) { groupApps(filtered) }
-                        LazyVerticalGrid(
+
+                        DrawerMode.GRID -> LazyVerticalGrid(
                             columns = GridCells.Fixed(state.config.columns),
                             modifier = Modifier.weight(1f).nestedScroll(pullDownToExit),
                             state = gridState,
@@ -264,36 +258,140 @@ fun AppDrawer(
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                             contentPadding = PaddingValues(bottom = 16.dp)
                         ) {
-                            groups.forEach { (category, group) ->
-                                item(
-                                    key = "category-$category",
-                                    span = { GridItemSpan(maxLineSpan) },
-                                    contentType = "header"
+                            gridItems(filtered, key = { it.key }, contentType = { "app" }) { app ->
+                                AppCell(
+                                    app,
+                                    state.config,
+                                    viewModel,
+                                    showLabel = state.config.showLabels,
+                                    fromHome = false,
+                                    dragEnabled = true,
+                                    iconPackKey = state.iconPack,
+                                    onDragStart = { bounds ->
+                                        bounds?.let { onAppDragStart?.invoke(app, it) }
+                                    },
+                                    onDrag = { onAppDrag?.invoke(it) },
+                                    onDragEnd = { onAppDragEnd?.invoke() },
+                                    onDragCancel = { onAppDragCancel?.invoke() }
+                                )
+                            }
+                        }
+
+                        DrawerMode.SMART -> {
+                            if (state.search.isNotBlank()) {
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(2),
+                                    modifier = Modifier.weight(1f).nestedScroll(pullDownToExit),
+                                    state = gridState,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    contentPadding = PaddingValues(bottom = 16.dp)
                                 ) {
-                                    Text(
-                                        "$category  ·  ${group.size}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Muted,
-                                        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
-                                    )
+                                    gridItems(filtered, key = { it.key }, contentType = { "app" }) { app ->
+                                        AppCell(
+                                            app,
+                                            state.config,
+                                            viewModel,
+                                            showLabel = true,
+                                            fromHome = false,
+                                            dragEnabled = true,
+                                            iconPackKey = state.iconPack,
+                                            onDragStart = { bounds ->
+                                                bounds?.let { onAppDragStart?.invoke(app, it) }
+                                            },
+                                            onDrag = { onAppDrag?.invoke(it) },
+                                            onDragEnd = { onAppDragEnd?.invoke() },
+                                            onDragCancel = { onAppDragCancel?.invoke() }
+                                        )
+                                    }
                                 }
-                                gridItems(group, key = { "${category}-${it.key}" }, contentType = { "app" }) { app ->
-                                    AppCell(
-                                        app,
-                                        state.config,
-                                        viewModel,
-                                        showLabel = state.config.showLabels,
-                                        fromHome = false,
-                                        dragEnabled = true,
-                                        iconPackKey = state.iconPack,
-                                        onDragStart = { bounds ->
-                                            bounds?.let { onAppDragStart?.invoke(app, it) }
-                                        },
-                                        onDrag = { onAppDrag?.invoke(it) },
-                                        onDragEnd = { onAppDragEnd?.invoke() },
-                                        onDragCancel = { onAppDragCancel?.invoke() }
-                                    )
+                            } else {
+                                val groups = remember(filtered) { smartGroups(filtered) }
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(2),
+                                    modifier = Modifier.weight(1f).nestedScroll(pullDownToExit),
+                                    state = gridState,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                                    contentPadding = PaddingValues(bottom = 16.dp)
+                                ) {
+                                    groups.forEach { (category, group) ->
+                                        item(key = "smart-$category", contentType = "smart") {
+                                            SmartCategoryCard(
+                                                category = category,
+                                                apps = group,
+                                                state = state,
+                                                viewModel = viewModel,
+                                                onOpenFolder = { openFolder = category },
+                                                onAppDragStart = onAppDragStart,
+                                                onAppDrag = onAppDrag,
+                                                onAppDragEnd = onAppDragEnd,
+                                                onAppDragCancel = onAppDragCancel
+                                            )
+                                        }
+                                    }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+            openFolder?.let { folder ->
+                val group = remember(filtered, folder) {
+                    smartGroups(filtered).firstOrNull { it.first == folder }?.second.orEmpty()
+                }
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFA0A0A0B))
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 18.dp)
+                ) {
+                    Column(Modifier.fillMaxSize()) {
+                        Spacer(Modifier.height(12.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                folder.uppercase(),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Paper,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                "${group.size} APPS",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Muted
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            TextButton(onClick = { openFolder = null }) {
+                                Text("CLOSE", style = MaterialTheme.typography.labelSmall, color = Muted)
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(state.config.columns),
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            contentPadding = PaddingValues(bottom = 16.dp)
+                        ) {
+                            gridItems(group, key = { it.key }, contentType = { "app" }) { app ->
+                                AppCell(
+                                    app,
+                                    state.config,
+                                    viewModel,
+                                    showLabel = state.config.showLabels,
+                                    fromHome = false,
+                                    dragEnabled = true,
+                                    iconPackKey = state.iconPack,
+                                    onDragStart = { bounds ->
+                                        bounds?.let { onAppDragStart?.invoke(app, it) }
+                                    },
+                                    onDrag = { onAppDrag?.invoke(it) },
+                                    onDragEnd = { onAppDragEnd?.invoke() },
+                                    onDragCancel = { onAppDragCancel?.invoke() }
+                                )
                             }
                         }
                     }
@@ -331,21 +429,64 @@ private fun ModeChip(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DrawerListRow(app: LauncherApp, viewModel: LauncherViewModel, iconPackKey: String?) {
+private fun DrawerListRow(
+    app: LauncherApp,
+    viewModel: LauncherViewModel,
+    iconPackKey: String?,
+    onDragStart: (LauncherApp, Rect) -> Unit,
+    onDrag: (Offset) -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit
+) {
     val icon by produceState<ImageBitmap?>(initialValue = viewModel.cachedIcon(app), app.key, iconPackKey) {
         value = viewModel.loadIcon(app)
     }
+    var bounds by remember(app.key) { mutableStateOf(Rect()) }
+    var suppressClickUntil by remember(app.key) { mutableStateOf(0L) }
+    val currentStart by rememberUpdatedState(onDragStart)
+    val currentDrag by rememberUpdatedState(onDrag)
+    val currentEnd by rememberUpdatedState(onDragEnd)
+    val currentCancel by rememberUpdatedState(onDragCancel)
     Row(
         Modifier
             .fillMaxWidth()
+            .onGloballyPositioned { coordinates ->
+                val b = coordinates.boundsInRoot()
+                bounds = Rect(
+                    b.left.roundToInt(),
+                    b.top.roundToInt(),
+                    b.right.roundToInt(),
+                    b.bottom.roundToInt()
+                )
+            }
             .clip(RoundedCornerShape(16.dp))
             .background(Surface0.copy(alpha = 0.78f))
-            .combinedClickable(
-                onClick = { viewModel.launch(app, fromHome = false) },
-                onLongClick = { viewModel.showMenu(app) }
-            )
+            .pointerInput(app.key) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = {
+                        suppressClickUntil = SystemClock.uptimeMillis() + 800
+                        currentStart(app, bounds)
+                    },
+                    onDragEnd = {
+                        suppressClickUntil = SystemClock.uptimeMillis() + 800
+                        currentEnd()
+                    },
+                    onDragCancel = {
+                        suppressClickUntil = SystemClock.uptimeMillis() + 800
+                        currentCancel()
+                    },
+                    onDrag = { change, amount ->
+                        change.consume()
+                        currentDrag(amount)
+                    }
+                )
+            }
+            .clickable {
+                if (SystemClock.uptimeMillis() >= suppressClickUntil) {
+                    viewModel.launch(app, fromHome = false)
+                }
+            }
             .padding(horizontal = 13.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -365,34 +506,152 @@ private fun DrawerListRow(app: LauncherApp, viewModel: LauncherViewModel, iconPa
     }
 }
 
-private fun groupApps(apps: List<LauncherApp>): List<Pair<String, List<LauncherApp>>> {
-    val categories = listOf(
-        "Communication", "Social", "Productivity", "Media", "Travel", "Shopping",
-        "Finance", "Tools", "Games", "Other"
-    )
-    return apps.groupBy(::categoryForApp)
-        .toSortedMap(compareBy<String> { category ->
-            categories.indexOf(category).let { if (it < 0) Int.MAX_VALUE else it }
-        })
-        .map { it.key to it.value }
-}
-
-private fun categoryForApp(app: LauncherApp): String {
-    val text = "${app.label} ${app.packageName}".lowercase()
-    fun has(vararg terms: String) = terms.any { text.contains(it) }
-    return when {
-        has("phone", "dialer", "contact", "message", "sms", "gmail", "mail", "whatsapp", "telegram") -> "Communication"
-        has("instagram", "facebook", "tiktok", "snapchat", "reddit", "twitter", "social") -> "Social"
-        has("calendar", "docs", "sheets", "drive", "office", "note", "task", "notion", "work") -> "Productivity"
-        has("camera", "photo", "gallery", "youtube", "music", "spotify", "video", "netflix", "podcast") -> "Media"
-        has("maps", "navigation", "travel", "uber", "bolt", "transit", "booking", "airline") -> "Travel"
-        has("shop", "store", "amazon", "retail", "marketplace") -> "Shopping"
-        has("bank", "wallet", "pay", "finance", "payment") -> "Finance"
-        has("settings", "calculator", "clock", "file", "browser", "recorder", "utility") -> "Tools"
-        has("game") -> "Games"
-        else -> "Other"
+@Composable
+private fun SmartCategoryCard(
+    category: String,
+    apps: List<LauncherApp>,
+    state: LauncherState,
+    viewModel: LauncherViewModel,
+    onOpenFolder: () -> Unit,
+    onAppDragStart: ((LauncherApp, Rect) -> Unit)?,
+    onAppDrag: ((Offset) -> Unit)?,
+    onAppDragEnd: (() -> Unit)?,
+    onAppDragCancel: (() -> Unit)?
+) {
+    val miniConfig = remember(state.config) {
+        state.config.copy(iconSize = 38, showLabels = false)
+    }
+    Surface(
+        color = Surface0.copy(alpha = 0.86f),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    category.uppercase(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Paper,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    apps.size.toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NothingRed
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                repeat(2) { row ->
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        repeat(2) { column ->
+                            val index = row * 2 + column
+                            val app = apps.getOrNull(index)
+                            if (index < 3 && app != null) {
+                                AppCell(
+                                    app = app,
+                                    config = miniConfig,
+                                    viewModel = viewModel,
+                                    modifier = Modifier.weight(1f),
+                                    showLabel = false,
+                                    fromHome = false,
+                                    dragEnabled = true,
+                                    iconPackKey = state.iconPack,
+                                    onDragStart = { bounds ->
+                                        bounds?.let { onAppDragStart?.invoke(app, it) }
+                                    },
+                                    onDrag = { onAppDrag?.invoke(it) },
+                                    onDragEnd = { onAppDragEnd?.invoke() },
+                                    onDragCancel = { onAppDragCancel?.invoke() }
+                                )
+                            } else {
+                                FolderTile(
+                                    apps = apps,
+                                    viewModel = viewModel,
+                                    iconPackKey = state.iconPack,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = onOpenFolder
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
+
+@Composable
+private fun FolderTile(
+    apps: List<LauncherApp>,
+    viewModel: LauncherViewModel,
+    iconPackKey: String?,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val hidden = (apps.size - 3).coerceAtLeast(0)
+    Column(
+        modifier
+            .height(50.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.06f))
+            .clickable(onClick = onClick),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(Modifier.size(26.dp)) {
+            apps.take(3).forEachIndexed { index, app ->
+                MiniAppIcon(
+                    app = app,
+                    viewModel = viewModel,
+                    iconPackKey = iconPackKey,
+                    modifier = Modifier
+                        .offset(x = (index * 6).dp, y = (index * 2).dp)
+                        .size(22.dp)
+                        .zIndex((3 - index).toFloat())
+                )
+            }
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            if (hidden > 0) "+$hidden" else "ALL",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (hidden > 0) NothingRed else Muted,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun MiniAppIcon(
+    app: LauncherApp,
+    viewModel: LauncherViewModel,
+    iconPackKey: String?,
+    modifier: Modifier = Modifier
+) {
+    val icon by produceState<ImageBitmap?>(initialValue = viewModel.cachedIcon(app), app.key, iconPackKey) {
+        value = viewModel.loadIcon(app)
+    }
+    AppIcon(icon, 22, false, modifier)
+}
+
+private val SMART_ORDER = listOf(
+    "Communication", "Social", "Entertainment", "Games", "Tools", "Productivity",
+    "Finance", "Photography", "Shopping", "Travel", "System", "Other"
+)
+
+private fun smartGroups(apps: List<LauncherApp>): List<Pair<String, List<LauncherApp>>> =
+    apps.groupBy { it.category }
+        .toList()
+        .sortedBy { (category, _) ->
+            SMART_ORDER.indexOf(category).let { if (it < 0) SMART_ORDER.size else it }
+        }
 
 @Composable
 private fun SearchField(

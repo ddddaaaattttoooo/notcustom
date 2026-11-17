@@ -1,3 +1,17 @@
+## NotCustom 0.3.22-beta
+
+- Widgets bind reliably on any phone: if the system needs permission, the standard bind prompt appears, then the widget's configuration screen still opens
+- Widgets pinned from other apps (for example Appbar) are accepted through Android's confirm-pin request
+- Long-press any widget in the picker and drag it onto Home; the sheet fades away and Home shows the target slots
+- Dragging apps out of GRID, LIST, and SMART drawers now highlights the exact Home slot and dock position before release
+- The app list refreshes immediately after installs, updates, and removals, including icon changes
+- Work profile and cloned apps are listed with profile badges and launch in the correct profile
+- POP-UP VIEW in the app menu opens an app in a centered freeform window on devices that support freeform
+- SMART drawer now matches Nothing OS: category cards in a two-column grid, three apps launch directly, and the folder tile opens the rest
+- Categories use Android's own app categories plus package and name heuristics
+- App menus show the app's dynamic shortcuts
+- Wallpaper pager parallax, spring-based animations, and a pre-composed drawer that opens without first-open jank
+
 ## NotCustom 0.3.21-beta
 
 - Check for NotCustom updates from Home Settings (GitHub first, GitLab as fallback)

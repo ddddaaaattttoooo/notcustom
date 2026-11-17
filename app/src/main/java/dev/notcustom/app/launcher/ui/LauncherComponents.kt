@@ -8,8 +8,8 @@ import android.graphics.Rect
 import android.os.BatteryManager
 import android.os.SystemClock
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -214,9 +214,14 @@ private fun readNextAlarm(context: Context): LocalDateTime? = runCatching {
 }.getOrNull()
 
 @Composable
-fun AppIcon(bitmap: ImageBitmap?, sizeDp: Int, monochrome: Boolean) {
+fun AppIcon(
+    bitmap: ImageBitmap?,
+    sizeDp: Int,
+    monochrome: Boolean,
+    modifier: Modifier = Modifier
+) {
     Box(
-        Modifier
+        modifier
             .size(sizeDp.dp)
             .clip(RoundedCornerShape(percent = 24))
             .background(Color.White.copy(alpha = 0.06f)),
@@ -275,10 +280,20 @@ fun AppCell(
     val currentDragCancel by rememberUpdatedState(onDragCancel)
     val currentOnPosition by rememberUpdatedState(onPosition)
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.88f else 1f, label = "iconScale")
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.88f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "iconScale"
+    )
     val returnScale by animateFloatAsState(
         targetValue = if (isReturning) 1.04f else 1f,
-        animationSpec = tween(durationMillis = 160, easing = FastOutSlowInEasing),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
         label = "returnScale"
     )
     var iconBounds by remember { mutableStateOf<Rect?>(null) }

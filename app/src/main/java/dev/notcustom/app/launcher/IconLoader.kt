@@ -4,7 +4,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.res.XmlResourceParser
-import android.os.Process
 import android.util.LruCache
 import android.util.Xml
 import androidx.compose.runtime.Immutable
@@ -36,6 +35,11 @@ class IconLoader(context: Context) {
     }
 
     fun peek(key: String): ImageBitmap? = cache.get(cacheKey(key, selectedPack))
+
+    fun clear() {
+        cache.evictAll()
+        appFilters.clear()
+    }
 
     @Suppress("DEPRECATION")
     fun availablePacks(): List<IconPackInfo> {
@@ -73,18 +77,19 @@ class IconLoader(context: Context) {
             cache.get(key)?.let { return@withPermit it }
             val density = appContext.resources.displayMetrics.densityDpi
             val pm = appContext.packageManager
+            val activityInfo = runCatching {
+                launcherApps.getActivityList(app.packageName, app.user)
+                    .firstOrNull { it.componentName == app.component }
+            }.getOrNull()
             val drawable = pack?.let { iconFromPack(it, app.component) }
+                ?: activityInfo?.getIcon(density)
                 ?: runCatching { pm.getActivityIcon(app.component) }.getOrNull()
-                ?: runCatching {
-                    launcherApps
-                        .getActivityList(app.packageName, Process.myUserHandle())
-                        .firstOrNull { it.componentName == app.component }
-                        ?.getIcon(density)
-                }.getOrNull()
                 ?: runCatching { pm.getApplicationIcon(app.packageName) }.getOrNull()
                 ?: return@withPermit null
+            val badged = runCatching { pm.getUserBadgedIcon(drawable, app.user) }
+                .getOrNull() ?: drawable
             val bitmap = runCatching {
-                drawable.toBitmap(width = 168, height = 168).asImageBitmap()
+                badged.toBitmap(width = 168, height = 168).asImageBitmap()
             }.getOrNull()
             if (bitmap != null) cache.put(key, bitmap)
             bitmap

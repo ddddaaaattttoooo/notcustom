@@ -11,13 +11,19 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
+import android.content.pm.ShortcutInfo
 import android.graphics.Rect
 import android.net.Uri
+import android.os.Bundle
 import android.os.Process
+import android.os.UserHandle
+import android.os.UserManager
 import android.provider.Settings
 import android.view.View
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.FileProvider
+import androidx.core.graphics.drawable.toBitmap
 import dev.notcustom.app.R
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -28,6 +34,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -60,6 +67,7 @@ data class LauncherState(
     val widgets: List<Int> = emptyList(),
     val widgetPickerOpen: Boolean = false,
     val widgetPickerPackage: String? = null,
+    val widgetConfigRequest: Intent? = null,
     val accessibilityEnabled: Boolean = false,
     val returning: ReturnTransition? = null,
     val update: UpdateState = UpdateState(),
@@ -89,12 +97,31 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val icons = IconLoader(application)
     private val widgetManager = AppWidgetManager.getInstance(application)
     val widgetHost = AppWidgetHost(application, WIDGET_HOST_ID)
+    private val launcherApps = application.getSystemService(LauncherApps::class.java)
     private val _state = MutableStateFlow(LauncherState())
     val state: StateFlow<LauncherState> = _state.asStateFlow()
 
     private var awaitingReturn = false
     private var lastLaunch: LaunchRecord? = null
     private var pendingConfigId: Int? = null
+    private var pendingBindId: Int? = null
+    private var reloadJob: Job? = null
+
+    private val appCallback = object : LauncherApps.Callback() {
+        override fun onPackageRemoved(packageName: String, user: UserHandle) = scheduleReload()
+        override fun onPackageAdded(packageName: String, user: UserHandle) = scheduleReload()
+        override fun onPackageChanged(packageName: String, user: UserHandle) = scheduleReload()
+        override fun onPackagesAvailable(
+            packageNames: Array<out String>,
+            user: UserHandle,
+            replacing: Boolean
+        ) = scheduleReload()
+        override fun onPackagesUnavailable(
+            packageNames: Array<out String>,
+            user: UserHandle,
+            replacing: Boolean
+        ) = scheduleReload()
+    }
 
     private data class LaunchRecord(
         val app: LauncherApp,
@@ -103,11 +130,26 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     )
 
     init {
+        runCatching { launcherApps.registerCallback(appCallback) }
         refreshAccessibility()
         reload()
         viewModelScope.launch {
             delay(4000)
             checkForUpdates()
+        }
+    }
+
+    override fun onCleared() {
+        runCatching { launcherApps.unregisterCallback(appCallback) }
+        super.onCleared()
+    }
+
+    private fun scheduleReload() {
+        reloadJob?.cancel()
+        reloadJob = viewModelScope.launch {
+            delay(250)
+            icons.clear()
+            reload()
         }
     }
 
@@ -157,7 +199,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         iconPack = iconPack
                     )
                 }
-                val byComponent = apps.associateBy { it.component }
+                val byComponent = primaryByComponent(apps)
                 val preload = ((unifiedPinned).mapNotNull { byComponent[it] } + apps)
                     .distinctBy { it.key }
                 viewModelScope.launch { preload.forEach { icons.load(it) } }
@@ -203,9 +245,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             ).toBundle()
         }
         var launched = runCatching {
-            launcherApps.startMainActivity(app.component, Process.myUserHandle(), bounds, opts)
+            launcherApps.startMainActivity(app.component, app.user, bounds, opts)
         }.isSuccess
-        if (!launched) {
+        if (!launched && app.user == Process.myUserHandle()) {
             launched = runCatching {
                 val intent = Intent(Intent.ACTION_MAIN)
                     .addCategory(Intent.CATEGORY_LAUNCHER)
@@ -536,7 +578,26 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             return
         }
         val positions = current.pinPositions.toMutableMap()
-        val target = freeSlotAtOrAfter(positions, targetSlot, current.config.columns)
+        val occupying = positions.entries.firstOrNull {
+            it.key != app.component && it.value == targetSlot
+        }?.key
+        if (occupying != null) {
+            val freeForOccupant = freeSlotAtOrAfter(
+                positions.filterValues { it != targetSlot },
+                targetSlot + 1,
+                current.config.columns
+            )
+            if (freeForOccupant == null) {
+                _state.update { it.copy(message = "No free space. Remove an app or a page first.") }
+                return
+            }
+            positions[occupying] = freeForOccupant
+        }
+        val target = if (occupying == null) {
+            freeSlotAtOrAfter(positions, targetSlot, current.config.columns)
+        } else {
+            targetSlot
+        }
         if (target == null) {
             _state.update { it.copy(message = "No free space. Remove an app or a page first.") }
             return
@@ -761,11 +822,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             Intent.ACTION_DELETE,
             Uri.parse("package:${app.packageName}")
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra(Intent.EXTRA_USER, app.user)
         runCatching { getApplication<Application>().startActivity(intent) }
         dismissMenu()
     }
 
     fun canUninstall(app: LauncherApp): Boolean {
+        if (app.user != Process.myUserHandle()) return false
         val context = getApplication<Application>()
         val info = runCatching {
             context.packageManager.getApplicationInfo(app.packageName, 0)
@@ -1020,7 +1083,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         icons.setSelectedPack(selected)
         _state.update { it.copy(iconPack = selected) }
         val apps = _state.value.apps
-        val byComponent = apps.associateBy { it.component }
+        val byComponent = primaryByComponent(apps)
         val preload = ((_state.value.pinned + _state.value.dock).mapNotNull { byComponent[it] } + apps)
             .distinctBy { it.key }
         viewModelScope.launch { preload.forEach { icons.load(it) } }
@@ -1072,38 +1135,46 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }.getOrDefault(emptyList())
     }
 
-    fun prepareWidget(info: AppWidgetProviderInfo): Intent? {
+    fun prepareWidget(info: AppWidgetProviderInfo) {
         val id = runCatching { widgetHost.allocateAppWidgetId() }.getOrNull()
         if (id == null) {
             _state.update { it.copy(message = "Could not allocate a widget slot.") }
-            return null
+            return
         }
         val allowed = runCatching {
             widgetManager.bindAppWidgetIdIfAllowed(id, info.provider)
         }.getOrDefault(false)
-        if (!allowed) {
-            runCatching { widgetHost.deleteAppWidgetId(id) }
-            _state.update {
-                it.copy(
-                    widgetPickerOpen = false,
-                    widgetPickerPackage = null,
-                    message = "Set NotCustom Home as your home app, then add the widget again."
-                )
-            }
-            return null
+        if (allowed) {
+            configureOrCommit(id, info)
+            return
         }
-        if (info.configure != null) {
-            pendingConfigId = id
-            _state.update { it.copy(widgetPickerOpen = false) }
-            return Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE)
-                .setComponent(info.configure)
-                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+        pendingBindId = id
+        _state.update {
+            it.copy(
+                widgetPickerOpen = false,
+                widgetPickerPackage = null,
+                widgetConfigRequest = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND)
+                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+            )
         }
-        commitWidget(id)
-        return null
     }
 
-    fun onWidgetConfigured(resultCode: Int) {
+    fun onWidgetResult(resultCode: Int, data: Intent?) {
+        pendingBindId?.let { allocated ->
+            pendingBindId = null
+            if (resultCode == Activity.RESULT_OK) {
+                val id = data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, allocated)
+                    ?.takeIf { it >= 0 } ?: allocated
+                configureOrCommit(id, widgetManager.getAppWidgetInfo(id))
+            } else {
+                runCatching { widgetHost.deleteAppWidgetId(allocated) }
+                _state.update {
+                    it.copy(message = "Widget permission was not granted. Set NotCustom as Home and try again.")
+                }
+            }
+            return
+        }
         val id = pendingConfigId ?: return
         pendingConfigId = null
         if (resultCode == Activity.RESULT_OK) {
@@ -1113,17 +1184,130 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun clearWidgetConfigRequest() {
+        _state.update { it.copy(widgetConfigRequest = null) }
+    }
+
+    fun handlePinRequest(intent: Intent?) {
+        if (intent == null) return
+        val request = runCatching { launcherApps.getPinItemRequest(intent) }.getOrNull() ?: return
+        if (request.requestType != LauncherApps.PinItemRequest.REQUEST_TYPE_APPWIDGET) return
+        val info = runCatching { request.getAppWidgetProviderInfo(getApplication()) }.getOrNull()
+            ?: return
+        val id = runCatching { widgetHost.allocateAppWidgetId() }.getOrNull()
+        if (id == null) {
+            _state.update { it.copy(message = "Could not allocate a widget slot.") }
+            return
+        }
+        val accepted = runCatching {
+            request.accept(Bundle().apply {
+                putInt(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+            })
+        }.getOrDefault(false)
+        if (!accepted) {
+            runCatching { widgetHost.deleteAppWidgetId(id) }
+            _state.update { it.copy(message = "Could not pin that widget.") }
+            return
+        }
+        configureOrCommit(id, info)
+    }
+
+    private fun configureOrCommit(id: Int, info: AppWidgetProviderInfo?) {
+        val configure = info?.configure
+        if (configure != null) {
+            pendingConfigId = id
+            _state.update {
+                it.copy(
+                    widgetPickerOpen = false,
+                    widgetPickerPackage = null,
+                    widgetConfigRequest = Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE)
+                        .setComponent(configure)
+                        .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                )
+            }
+        } else {
+            commitWidget(id)
+        }
+    }
+
+    fun shortcuts(app: LauncherApp): List<ShortcutInfo> = runCatching {
+        val query = LauncherApps.ShortcutQuery()
+            .setQueryFlags(
+                LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC or
+                    LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST or
+                    LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED
+            )
+            .setPackage(app.packageName)
+            .setActivity(app.component)
+        launcherApps.getShortcuts(query, app.user).orEmpty()
+    }.getOrDefault(emptyList())
+        .filter { it.isEnabled }
+        .take(4)
+
+    suspend fun shortcutIcon(shortcut: ShortcutInfo): ImageBitmap? = withContext(Dispatchers.IO) {
+        val density = getApplication<Application>().resources.displayMetrics.densityDpi
+        runCatching {
+            launcherApps.getShortcutIconDrawable(shortcut, density)
+                ?.toBitmap(112, 112)
+                ?.asImageBitmap()
+        }.getOrNull()
+    }
+
+    fun launchShortcut(app: LauncherApp, shortcut: ShortcutInfo) {
+        val launched = runCatching {
+            launcherApps.startShortcut(app.packageName, shortcut.id, null, null, app.user)
+        }.isSuccess
+        _state.update { it.copy(menuApp = null) }
+        if (!launched) _state.update { it.copy(message = "Could not open that shortcut.") }
+    }
+
+    fun launchPopup(app: LauncherApp) {
+        val context = getApplication<Application>()
+        val metrics = context.resources.displayMetrics
+        val width = (metrics.widthPixels * 0.75f).roundToInt()
+        val height = (metrics.heightPixels * 0.55f).roundToInt()
+        val left = ((metrics.widthPixels - width) / 2).coerceAtLeast(0)
+        val top = ((metrics.heightPixels - height) / 2).coerceAtLeast(0)
+        val options = ActivityOptions.makeBasic().apply {
+            setLaunchBounds(Rect(left, top, left + width, top + height))
+            runCatching {
+                ActivityOptions::class.java
+                    .getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType)
+                    .invoke(this, 5)
+            }
+        }
+        val launched = runCatching {
+            launcherApps.startMainActivity(app.component, app.user, null, options.toBundle())
+        }.isSuccess
+        _state.update { it.copy(menuApp = null) }
+        if (!launched) {
+            launch(app)
+            _state.update { it.copy(message = "Pop-up view is not available for ${app.label}.") }
+        }
+    }
+
     fun onWidgetConfigFailed() {
         pendingConfigId?.let { runCatching { widgetHost.deleteAppWidgetId(it) } }
         pendingConfigId = null
-        _state.update { it.copy(message = "Could not configure that widget.") }
+        pendingBindId?.let { runCatching { widgetHost.deleteAppWidgetId(it) } }
+        pendingBindId = null
+        _state.update { it.copy(message = "Could not add that widget.") }
     }
 
     private fun commitWidget(id: Int) {
         val updated = (_state.value.widgets + id).distinct()
         prefs.widgets = updated
+        if (_state.value.currentPage != 0) {
+            prefs.currentPage = 0
+        }
         _state.update {
-            it.copy(widgets = updated, widgetPickerOpen = false, widgetPickerPackage = null)
+            it.copy(
+                widgets = updated,
+                currentPage = 0,
+                widgetPickerOpen = false,
+                widgetPickerPackage = null,
+                message = "Widget added"
+            )
         }
     }
 
@@ -1297,20 +1481,102 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         return result
     }
 
+    private fun primaryByComponent(apps: List<LauncherApp>): Map<ComponentName, LauncherApp> =
+        apps.groupBy { it.component }.mapValues { (_, list) ->
+            list.firstOrNull { it.user == Process.myUserHandle() } ?: list.first()
+        }
+
     private fun loadApps(): List<LauncherApp> {
-        val launcherApps = getApplication<Application>()
-            .getSystemService(LauncherApps::class.java)
+        val context = getApplication<Application>()
+        val launcherApps = context.getSystemService(LauncherApps::class.java)
+        val userManager = context.getSystemService(UserManager::class.java)
+        val users = runCatching { userManager?.userProfiles }.getOrNull().orEmpty()
+            .ifEmpty { listOf(Process.myUserHandle()) }
         val collator = Collator.getInstance()
-        return launcherApps
-            .getActivityList(null, Process.myUserHandle())
-            .mapNotNull { info ->
-                val component = info.componentName ?: return@mapNotNull null
-                val label = info.label?.toString()?.takeIf { it.isNotBlank() }
-                    ?: component.packageName
-                LauncherApp(component, label, component.packageName)
+        val result = ArrayList<LauncherApp>()
+        val categoryCache = HashMap<String, Pair<String, Boolean>>()
+        users.forEach { user ->
+            runCatching {
+                launcherApps.getActivityList(null, user).forEach { info ->
+                    val component = info.componentName ?: return@forEach
+                    val label = info.label?.toString()?.takeIf { it.isNotBlank() }
+                        ?: component.packageName
+                    val cached = categoryCache[component.packageName]
+                    val appInfo: ApplicationInfo? = if (cached != null) {
+                        null
+                    } else {
+                        runCatching {
+                            launcherApps.getApplicationInfo(component.packageName, 0, user)
+                        }.getOrNull()
+                    }
+                    val system = cached?.second
+                        ?: (((appInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM) != 0)
+                    val category = cached?.first
+                        ?: appInfo?.let { categoryFor(it, label, component.packageName, system) }
+                        ?: "Other"
+                    if (cached == null) categoryCache[component.packageName] = category to system
+                    result += LauncherApp(
+                        component = component,
+                        label = label,
+                        packageName = component.packageName,
+                        user = user,
+                        category = category,
+                        system = system
+                    )
+                }
             }
-            .distinctBy { it.component }
-            .sortedWith { a, b -> collator.compare(a.label, b.label) }
+        }
+        return result.distinctBy { it.key }.sortedWith { a, b ->
+            val byLabel = collator.compare(a.label, b.label)
+            if (byLabel != 0) byLabel else a.user.hashCode().compareTo(b.user.hashCode())
+        }
+    }
+
+    private fun categoryFor(
+        info: ApplicationInfo,
+        label: String,
+        packageName: String,
+        system: Boolean
+    ): String {
+        val text = "$label $packageName".lowercase()
+        fun has(vararg terms: String) = terms.any { text.contains(it) }
+        if (system && has(
+                "settings", "systemui", "system ui", "provider", "server", "service",
+                "sim", "telecom", "nfc", "bluetooth", "installer", "launcher", "shell"
+            )
+        ) {
+            return "System"
+        }
+        return when (info.category) {
+            ApplicationInfo.CATEGORY_SOCIAL -> "Social"
+            ApplicationInfo.CATEGORY_GAME -> "Games"
+            ApplicationInfo.CATEGORY_AUDIO, ApplicationInfo.CATEGORY_VIDEO -> "Entertainment"
+            ApplicationInfo.CATEGORY_IMAGE -> "Photography"
+            ApplicationInfo.CATEGORY_NEWS -> "Social"
+            ApplicationInfo.CATEGORY_MAPS -> "Travel"
+            ApplicationInfo.CATEGORY_PRODUCTIVITY -> "Productivity"
+            ApplicationInfo.CATEGORY_ACCESSIBILITY -> "Tools"
+            else -> when {
+                has("phone", "dialer", "contact", "message", "sms", "mms", "gmail", "mail",
+                    "whatsapp", "telegram", "signal") -> "Communication"
+                has("instagram", "facebook", "tiktok", "snapchat", "reddit", "twitter",
+                    "threads", "mastodon", "social") -> "Social"
+                has("bank", "wallet", "pay", "finance", "revolut", "monzo", "cash") -> "Finance"
+                has("shop", "store", "amazon", "ebay", "etsy", "retail", "marketplace",
+                    "allegro") -> "Shopping"
+                has("maps", "navigation", "travel", "uber", "bolt", "transit", "booking",
+                    "airline", "flight", "train") -> "Travel"
+                has("camera", "photo", "gallery", "lens", "scanner") -> "Photography"
+                has("calendar", "docs", "sheet", "drive", "office", "note", "task", "notion",
+                    "slack", "teams", "work") -> "Productivity"
+                has("settings", "calculator", "clock", "file", "browser", "recorder",
+                    "utility", "vpn", "keyboard", "tools") -> "Tools"
+                has("youtube", "music", "spotify", "video", "netflix", "podcast", "tv",
+                    "player", "audio") -> "Entertainment"
+                has("game") -> "Games"
+                else -> "Other"
+            }
+        }
     }
 
     companion object {

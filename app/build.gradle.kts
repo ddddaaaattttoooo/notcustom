@@ -12,8 +12,8 @@ android {
         applicationId = "dev.notcustom.app"
         minSdk = 31
         targetSdk = 34
-        versionCode = 24
-        versionName = "0.3.21-beta"
+        versionCode = 25
+        versionName = "0.3.22-beta"
     }
 
     buildTypes {
