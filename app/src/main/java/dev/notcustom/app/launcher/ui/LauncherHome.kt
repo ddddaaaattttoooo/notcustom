@@ -263,6 +263,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
     val updateHomeDrag: (Offset) -> Unit = { delta ->
         homeDrag?.let { drag ->
             drag.offset += delta
+            drag.travelled = maxOf(drag.travelled, drag.offset.getDistance())
             val pageSize = state.config.columns * HOME_ROWS
             val x = drag.origin.exactCenterX() + drag.offset.x
             val y = drag.origin.exactCenterY() + drag.offset.y
@@ -647,7 +648,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 onHomeDragEnd = {
                     homeDrag?.let { drag ->
                         val action = drag.actionTarget
-                        val moved = drag.offset.getDistance() > 24f
+                        val moved = drag.travelled > 24f
                         if (action != null) {
                             when (action) {
                                 HomeDropAction.Remove -> viewModel.unpin(drag.app)
@@ -741,7 +742,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                                 HomeDropAction.AppInfo -> viewModel.appInfo(drag.app)
                                 HomeDropAction.Cancel -> Unit
                             }
-                        } else if (drag.offset.getDistance() <= 24f) {
+                        } else if (drag.travelled <= 24f) {
                             viewModel.showMenu(drag.app)
                         } else {
                             when {
@@ -1356,6 +1357,8 @@ private class HomeDrag(
     var edgeDirection by mutableIntStateOf(0)
     var edgeConsumed by mutableStateOf(false)
     var actionTarget by mutableStateOf<HomeDropAction?>(null)
+    /** Farthest the finger got from the start; a drag that returns home is still a drag, not a menu press. */
+    var travelled = 0f
 }
 
 private class WidgetDrag(val id: Int, val origin: Rect, val sourcePage: Int) {
