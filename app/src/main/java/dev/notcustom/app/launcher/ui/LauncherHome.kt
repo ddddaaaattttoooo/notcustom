@@ -63,6 +63,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -724,6 +725,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 slotBounds = dockSlotBounds,
                 highlightDockIndex = drawerDrag?.takeIf { it.active }?.hoverDockSlot?.takeIf { it >= 0 },
                 homeDrag = homeDrag,
+                dragging = homeDrag != null || drawerDrag != null,
                 onDragStart = { app, origin ->
                     homeDrag = HomeDrag(app, origin, state.currentPage, homeDropActions(viewModel, app))
                     homeDragActive = true
@@ -911,6 +913,7 @@ private fun DockRow(
     slotBounds: MutableMap<Int, Rect>,
     highlightDockIndex: Int?,
     homeDrag: HomeDrag?,
+    dragging: Boolean,
     onDragStart: (LauncherApp, Rect) -> Unit,
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
@@ -932,7 +935,9 @@ private fun DockRow(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        repeat(MAX_DOCK_ITEMS) { index ->
+        // Spread docked apps evenly; empty drop slots only appear while something is being dragged.
+        val shown = (0 until MAX_DOCK_ITEMS).filter { dragging || appByDockIndex[it] != null }
+        shown.forEach { index -> key(index) {
             val app = appByDockIndex[index]
             DisposableEffect(index) { onDispose { slotBounds.remove(index) } }
             Box(
@@ -982,7 +987,7 @@ private fun DockRow(
                     )
                 }
             }
-        }
+        } }
     }
 }
 
@@ -1079,9 +1084,7 @@ private fun HomePager(
         PageDots(
             pageCount = safeCount,
             currentPage = pagerState.currentPage,
-            onSelect = viewModel::setCurrentPage,
-            onAdd = viewModel::addPage,
-            onRemove = viewModel::removeCurrentPage
+            onSelect = viewModel::setCurrentPage
         )
     }
 }
@@ -1540,73 +1543,29 @@ private fun EdgeDropIndicator(direction: Int, page: Int, pageCount: Int) {
 private fun PageDots(
     pageCount: Int,
     currentPage: Int,
-    onSelect: (Int) -> Unit,
-    onAdd: () -> Unit,
-    onRemove: () -> Unit
+    onSelect: (Int) -> Unit
 ) {
+    // Page add/remove lives in the Home long-press menu; dots only, like stock launchers.
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .height(20.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        PageStepButton("−", enabled = pageCount > 1, onClick = onRemove)
-        Spacer(Modifier.width(8.dp))
-        Text(
-            "${currentPage + 1}/$pageCount",
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White.copy(alpha = 0.72f)
-        )
-        Spacer(Modifier.width(8.dp))
-        Row(
-            Modifier.weight(1f),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            repeat(pageCount) { page ->
-                Box(
-                    Modifier
-                        .padding(horizontal = 3.dp)
-                        .size(if (page == currentPage) 8.dp else 6.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (page == currentPage) NothingRed else Color.White.copy(alpha = 0.28f)
-                        )
-                        .clickable { onSelect(page) }
-                )
-            }
+        if (pageCount < 2) return@Row
+        repeat(pageCount) { page ->
+            Box(
+                Modifier
+                    .padding(horizontal = 3.dp)
+                    .size(if (page == currentPage) 8.dp else 6.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (page == currentPage) NothingRed else Color.White.copy(alpha = 0.28f)
+                    )
+                    .clickable { onSelect(page) }
+            )
         }
-        Spacer(Modifier.width(8.dp))
-        PageStepButton("+", enabled = pageCount < MAX_HOME_PAGES, onClick = onAdd)
-    }
-}
-
-@Composable
-private fun PageStepButton(label: String, enabled: Boolean, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .size(32.dp)
-            .clip(CircleShape)
-            .background(
-                if (enabled) Color.White.copy(alpha = 0.10f)
-                else Color.White.copy(alpha = 0.04f)
-            )
-            .border(
-                1.dp,
-                if (enabled) Color.White.copy(alpha = 0.22f)
-                else Color.White.copy(alpha = 0.08f),
-                CircleShape
-            )
-            .clickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.titleMedium,
-            color = if (enabled) Color.White.copy(alpha = 0.85f)
-            else Color.White.copy(alpha = 0.25f)
-        )
     }
 }
 
