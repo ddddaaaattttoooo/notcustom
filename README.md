@@ -5,7 +5,7 @@
 <p align="center">ANDROID 12+ &nbsp;•&nbsp; NO ROOT &nbsp;•&nbsp; MIT LICENSE</p>
 
 <p align="center">
-  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.23-beta"><img alt="Download NotCustom 0.3.23-beta" src="https://img.shields.io/badge/Download-NotCustom%200.3.23--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
+  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.24-beta"><img alt="Download NotCustom 0.3.24-beta" src="https://img.shields.io/badge/Download-NotCustom%200.3.24--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
 </p>
 
 NotCustom is an Android launcher with a flexible Home screen, app drawer, widgets, and optional Shizuku-powered system tweaks. It takes visual inspiration from Nothing OS while keeping Nothing Launcher intact.
@@ -16,7 +16,7 @@ NotCustom is an Android launcher with a flexible Home screen, app drawer, widget
 
 ### Download the APK
 
-Download the APK from [GitHub Releases](https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.23-beta).
+Download the APK from [GitHub Releases](https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.24-beta).
 
 ### Install on your phone
 
@@ -25,7 +25,7 @@ Download the APK from [GitHub Releases](https://github.com/ddddaaaattttoooo/notc
 3. Press Home and choose **NotCustom Home**. Choose **Always** if you want it as your default launcher. You can change this later in Android's Default apps settings.
 4. Optional: open Home Settings to enable accessibility access for screen-off and notification-shade gestures. Android may require **App info → Allow restricted settings** for a sideloaded build.
 
-To update, install the newer APK over the existing app. Beta APKs use Android's debug signing key, so Android may reject an update if the two APKs were signed with different keys. Uninstalling first removes NotCustom's saved layout and settings. A stable release-signing key is needed before promising seamless updates between every release.
+To update, install the newer APK over the existing app. Beta APKs use one shared signing key, so updates install in place and keep NotCustom's saved layout and settings.
 
 ## Compatibility
 

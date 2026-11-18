@@ -25,6 +25,9 @@ data class WidgetChoice(
     val sizeLabel: String
 )
 
+@Immutable
+data class WidgetSize(val columns: Int, val rows: Int)
+
 enum class AtAGlanceStyle {
     CLOCK,
     BATTERY,

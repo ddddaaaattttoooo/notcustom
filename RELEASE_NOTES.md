@@ -1,3 +1,12 @@
+## NotCustom 0.3.24-beta
+
+- Resize any Home widget: long-press it to select, then drag the corner handle to change its width and height in grid cells
+- Widget sizes are remembered per widget, including after a restart
+- Widgets now start at a sensible cell size instead of stretching across the whole Home screen
+- Home no longer scrolls when a large widget is added; grid rows shrink to keep every page on one screen
+- Tap outside a selected widget or press Back to deselect it
+- Dragging a selected widget still removes it, and normal widget taps continue to work
+
 ## NotCustom 0.3.23-beta
 
 - Release APKs now use a stable signing key, so updates install over older versions instead of failing with a package conflict

@@ -65,6 +65,7 @@ data class LauncherState(
     val settingsOpen: Boolean = false,
     val homeMenuOpen: Boolean = false,
     val widgets: List<Int> = emptyList(),
+    val widgetSizes: Map<Int, WidgetSize> = emptyMap(),
     val widgetPickerOpen: Boolean = false,
     val widgetPickerPackage: String? = null,
     val widgetConfigRequest: Intent? = null,
@@ -164,6 +165,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             prefs.iconPack = iconPack
             icons.setSelectedPack(iconPack)
             val widgets = loadWidgets()
+            val widgetSizes = syncWidgetSizes(widgets, prefs.columns)
             if (apps.isNotEmpty()) {
                 if (!prefs.initialized) applyDefaults(apps)
                 val valid = apps.map { it.component }.toSet()
@@ -194,6 +196,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                             .sortedByDescending { it.value }.map { it.key },
                         hidden = hidden,
                         widgets = widgets,
+                        widgetSizes = widgetSizes,
                         config = config,
                         drawerMode = prefs.drawerMode,
                         iconPacks = iconPacks,
@@ -210,6 +213,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     it.copy(
                         loading = false,
                         widgets = widgets,
+                        widgetSizes = widgetSizes,
                         iconPacks = iconPacks,
                         iconPack = iconPack,
                         iconRevision = it.iconRevision + 1
@@ -1301,13 +1305,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     private fun commitWidget(id: Int) {
         val updated = (_state.value.widgets + id).distinct()
+        val size = _state.value.widgetSizes[id]
+            ?: defaultWidgetSize(id, _state.value.config.columns)
+        val sizes = _state.value.widgetSizes + (id to size)
         prefs.widgets = updated
+        prefs.widgetSizes = sizes
         if (_state.value.currentPage != 0) {
             prefs.currentPage = 0
         }
         _state.update {
             it.copy(
                 widgets = updated,
+                widgetSizes = sizes,
                 currentPage = 0,
                 widgetPickerOpen = false,
                 widgetPickerPackage = null,
@@ -1316,17 +1325,33 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun resizeWidget(id: Int, columns: Int, rows: Int) {
+        if (id !in _state.value.widgets) return
+        val maxColumns = _state.value.config.columns
+        val size = WidgetSize(
+            columns.coerceIn(1, maxColumns),
+            rows.coerceIn(1, HOME_GRID_ROWS)
+        )
+        if (_state.value.widgetSizes[id] == size) return
+        val sizes = _state.value.widgetSizes + (id to size)
+        prefs.widgetSizes = sizes
+        _state.update { it.copy(widgetSizes = sizes) }
+    }
+
     fun removeWidget(id: Int) {
         runCatching { widgetHost.deleteAppWidgetId(id) }
         val updated = _state.value.widgets - id
+        val sizes = _state.value.widgetSizes - id
         prefs.widgets = updated
-        _state.update { it.copy(widgets = updated) }
+        prefs.widgetSizes = sizes
+        _state.update { it.copy(widgets = updated, widgetSizes = sizes) }
     }
 
     fun clearWidgets() {
         _state.value.widgets.forEach { runCatching { widgetHost.deleteAppWidgetId(it) } }
         prefs.widgets = emptyList()
-        _state.update { it.copy(widgets = emptyList()) }
+        prefs.widgetSizes = emptyMap()
+        _state.update { it.copy(widgets = emptyList(), widgetSizes = emptyMap()) }
     }
 
     fun widgetLabel(id: Int): String = runCatching {
@@ -1365,6 +1390,29 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val ids = prefs.widgets.filter { widgetManager.getAppWidgetInfo(it) != null }
         if (ids != prefs.widgets) prefs.widgets = ids
         return ids
+    }
+
+    private fun syncWidgetSizes(widgets: List<Int>, columns: Int): Map<Int, WidgetSize> {
+        val saved = prefs.widgetSizes.filterKeys { it in widgets }.toMutableMap()
+        var changed = saved.size != prefs.widgetSizes.size
+        widgets.forEach { id ->
+            if (id !in saved) {
+                saved[id] = defaultWidgetSize(id, columns)
+                changed = true
+            }
+        }
+        if (changed) prefs.widgetSizes = saved
+        return saved
+    }
+
+    private fun defaultWidgetSize(id: Int, columns: Int): WidgetSize {
+        val info = runCatching { widgetManager.getAppWidgetInfo(id) }.getOrNull()
+        val minWidth = (info?.minWidth ?: 70).coerceAtLeast(70)
+        val minHeight = (info?.minHeight ?: 70).coerceAtLeast(70)
+        return WidgetSize(
+            (minWidth / 70f).roundToInt().coerceIn(1, columns),
+            (minHeight / 70f).roundToInt().coerceIn(1, HOME_GRID_ROWS)
+        )
     }
 
     private fun firstFreeSlot(

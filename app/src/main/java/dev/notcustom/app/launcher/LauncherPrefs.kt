@@ -94,6 +94,24 @@ class LauncherPrefs(context: Context) {
             .mapNotNull { it.toIntOrNull() }
         set(value) = prefs.edit().putString("widgets", value.joinToString(",")).apply()
 
+    var widgetSizes: Map<Int, WidgetSize>
+        get() = prefs.getString("widget_sizes", null).orEmpty()
+            .split(";")
+            .mapNotNull { entry ->
+                val parts = entry.split(':')
+                if (parts.size != 3) return@mapNotNull null
+                val id = parts[0].toIntOrNull() ?: return@mapNotNull null
+                val columns = parts[1].toIntOrNull() ?: return@mapNotNull null
+                val rows = parts[2].toIntOrNull() ?: return@mapNotNull null
+                id to WidgetSize(columns, rows)
+            }.toMap()
+        set(value) = prefs.edit().putString(
+            "widget_sizes",
+            value.entries.joinToString(";") {
+                "${it.key}:${it.value.columns}:${it.value.rows}"
+            }
+        ).apply()
+
     fun config(): LauncherConfig = LauncherConfig(
         columns = columns,
         iconSize = iconSize,

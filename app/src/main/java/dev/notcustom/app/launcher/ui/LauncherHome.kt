@@ -3,7 +3,10 @@ package dev.notcustom.app.launcher.ui
 import android.app.WallpaperManager
 import android.graphics.Rect
 import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
+import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
@@ -14,12 +17,15 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -69,6 +75,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -83,6 +90,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -95,6 +103,7 @@ import dev.notcustom.app.launcher.MAX_HOME_PAGES
 import dev.notcustom.app.launcher.LauncherApp
 import dev.notcustom.app.launcher.LauncherConfig
 import dev.notcustom.app.launcher.LauncherViewModel
+import dev.notcustom.app.launcher.WidgetSize
 import dev.notcustom.app.launcher.ReturnTransition
 import dev.notcustom.app.ui.theme.Muted
 import dev.notcustom.app.ui.theme.NothingRed
@@ -167,6 +176,8 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
     var homeDrag by remember { mutableStateOf<HomeDrag?>(null) }
     var widgetDrag by remember { mutableStateOf<WidgetDrag?>(null) }
     var drawerDrag by remember { mutableStateOf<DrawerDrag?>(null) }
+    var selectedWidgetId by remember { mutableStateOf<Int?>(null) }
+    val widgetPressGate = remember { WidgetPressGate() }
     val homeEditing = homeDrag != null || widgetDrag != null
     val homeScale by animateFloatAsState(
         targetValue = if (homeEditing) 0.88f else 1f,
@@ -179,6 +190,27 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
     val edgeThreshold = with(density) { 64.dp.toPx() }
     val drawerDragActive = drawerDrag?.active == true
     val homeDragActiveState = rememberUpdatedState(homeDragActive)
+
+    LaunchedEffect(selectedWidgetId, state.widgets) {
+        if (selectedWidgetId != null && selectedWidgetId !in state.widgets) {
+            selectedWidgetId = null
+        }
+    }
+    LaunchedEffect(
+        state.drawerOpen,
+        state.homeMenuOpen,
+        state.settingsOpen,
+        state.widgetPickerOpen,
+        state.menuApp,
+        widgetDrag
+    ) {
+        if (state.drawerOpen || state.homeMenuOpen || state.settingsOpen ||
+            state.widgetPickerOpen || state.menuApp != null || widgetDrag != null
+        ) {
+            selectedWidgetId = null
+        }
+    }
+    BackHandler(enabled = selectedWidgetId != null) { selectedWidgetId = null }
 
     LaunchedEffect(homeDrag, homeDrag?.edgeDirection, state.currentPage, state.pageCount) {
         val drag = homeDrag ?: return@LaunchedEffect
@@ -303,8 +335,11 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                     return@pointerInput
                 }
                 detectTapGestures(
+                    onTap = { selectedWidgetId = null },
                     onDoubleTap = { viewModel.lockScreen() },
-                    onLongPress = { viewModel.openHomeMenu() }
+                    onLongPress = {
+                        if (!widgetPressGate.down) viewModel.openHomeMenu()
+                    }
                 )
             }
     ) {
@@ -369,7 +404,15 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
             HomePager(
                 apps = pinned,
                 widgets = state.widgets,
-                onWidgetDragStart = { id, origin -> widgetDrag = WidgetDrag(id, origin) },
+                widgetSizes = state.widgetSizes,
+                selectedWidgetId = selectedWidgetId,
+                widgetPressGate = widgetPressGate,
+                onWidgetSelect = { selectedWidgetId = it },
+                onWidgetResize = viewModel::resizeWidget,
+                onWidgetDragStart = { id, origin ->
+                    selectedWidgetId = null
+                    widgetDrag = WidgetDrag(id, origin)
+                },
                 onWidgetDrag = { delta ->
                     widgetDrag?.let { drag ->
                         drag.offset += delta
@@ -763,6 +806,11 @@ private fun DockRow(
 private fun HomePager(
     apps: List<LauncherApp>,
     widgets: List<Int>,
+    widgetSizes: Map<Int, WidgetSize>,
+    selectedWidgetId: Int?,
+    widgetPressGate: WidgetPressGate,
+    onWidgetSelect: (Int?) -> Unit,
+    onWidgetResize: (Int, Int, Int) -> Unit,
     onWidgetDragStart: (Int, Rect) -> Unit,
     onWidgetDrag: (Offset) -> Unit,
     onWidgetDragEnd: () -> Unit,
@@ -815,6 +863,11 @@ private fun HomePager(
                 page = page,
                 apps = apps,
                 widgets = widgets,
+                widgetSizes = widgetSizes,
+                selectedWidgetId = selectedWidgetId,
+                widgetPressGate = widgetPressGate,
+                onWidgetSelect = onWidgetSelect,
+                onWidgetResize = onWidgetResize,
                 onWidgetDragStart = onWidgetDragStart,
                 onWidgetDrag = onWidgetDrag,
                 onWidgetDragEnd = onWidgetDragEnd,
@@ -851,6 +904,11 @@ private fun HomePage(
     pageCount: Int,
     apps: List<LauncherApp>,
     widgets: List<Int>,
+    widgetSizes: Map<Int, WidgetSize>,
+    selectedWidgetId: Int?,
+    widgetPressGate: WidgetPressGate,
+    onWidgetSelect: (Int?) -> Unit,
+    onWidgetResize: (Int, Int, Int) -> Unit,
     onWidgetDragStart: (Int, Rect) -> Unit,
     onWidgetDrag: (Offset) -> Unit,
     onWidgetDragEnd: () -> Unit,
@@ -872,23 +930,51 @@ private fun HomePage(
     val pageSize = config.columns * HOME_ROWS
     val pageStart = page * pageSize
     val pageWidgets = if (page == 0) widgets else emptyList()
+    val pageWidgetSizes = remember(pageWidgets, widgetSizes, config.columns) {
+        pageWidgets.associateWith { id ->
+            val size = widgetSizes[id] ?: WidgetSize(1, 1)
+            WidgetSize(
+                size.columns.coerceIn(1, config.columns),
+                size.rows.coerceIn(1, HOME_GRID_ROWS)
+            )
+        }
+    }
     val appsBySlot = remember(apps, pinPositions, pageStart, pageSize) {
         apps.filter { (pinPositions[it.component] ?: -1) in pageStart until pageStart + pageSize }
             .associateBy { pinPositions[it.component] ?: -1 }
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val slotHeight = ((maxHeight - 42.dp) / HOME_GRID_ROWS).coerceAtLeast(60.dp)
+        val gapX = 4.dp
+        val gapY = 10.dp
+        val widgetRows = remember(pageWidgets, pageWidgetSizes, config.columns) {
+            widgetLineRows(pageWidgets, pageWidgetSizes, config.columns)
+        }
+        val totalRows = HOME_GRID_ROWS + widgetRows
+        val rowHeight = ((maxHeight - 12.dp - gapY * (totalRows - 1)) / totalRows)
+            .coerceAtLeast(44.dp)
+        val slotHeight = rowHeight
+        val cellWidth = (maxWidth - gapX * (config.columns - 1)) / config.columns
         LazyVerticalGrid(
             columns = GridCells.Fixed(config.columns), modifier = Modifier.fillMaxSize(),
-            userScrollEnabled = pageWidgets.isNotEmpty() || config.iconSize > 64,
-            horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(10.dp),
+            userScrollEnabled = false,
+            horizontalArrangement = Arrangement.spacedBy(gapX), verticalArrangement = Arrangement.spacedBy(gapY),
             contentPadding = PaddingValues(top = 4.dp, bottom = 8.dp)
         ) {
             pageWidgets.forEach { id ->
-                item(key = "widget-$id", span = { GridItemSpan(maxLineSpan) }) {
+                val size = pageWidgetSizes[id] ?: WidgetSize(1, 1)
+                item(key = "widget-$id", span = { GridItemSpan(size.columns) }) {
                     WidgetView(
                         id = id,
                         host = viewModel.widgetHost,
+                        size = size,
+                        rowHeight = rowHeight,
+                        cellWidth = cellWidth,
+                        maxColumns = config.columns,
+                        maxRows = HOME_GRID_ROWS,
+                        selected = selectedWidgetId == id,
+                        pressGate = widgetPressGate,
+                        onSelect = onWidgetSelect,
+                        onResize = onWidgetResize,
                         onDragStart = { origin -> onWidgetDragStart(id, origin) },
                         onDrag = onWidgetDrag,
                         onDragEnd = onWidgetDragEnd,
@@ -1021,6 +1107,10 @@ private class HomeDrag(
 private class WidgetDrag(val id: Int, val origin: Rect) {
     var offset by mutableStateOf(Offset.Zero)
     var hoverRemove by mutableStateOf(false)
+}
+
+private class WidgetPressGate {
+    var down = false
 }
 
 @Composable
@@ -1161,21 +1251,73 @@ private fun PageStepButton(label: String, enabled: Boolean, onClick: () -> Unit)
     }
 }
 
+private fun widgetLineRows(
+    widgets: List<Int>,
+    sizes: Map<Int, WidgetSize>,
+    columns: Int
+): Int {
+    var lines = 0
+    var used = 0
+    var lineRows = 0
+    widgets.forEach { id ->
+        val size = sizes[id] ?: return@forEach
+        val width = size.columns.coerceIn(1, columns)
+        val height = size.rows.coerceAtLeast(1)
+        if (used > 0 && used + width > columns) {
+            lines += lineRows
+            used = 0
+            lineRows = 0
+        }
+        used += width
+        lineRows = maxOf(lineRows, height)
+        if (used >= columns) {
+            lines += lineRows
+            used = 0
+            lineRows = 0
+        }
+    }
+    if (used > 0) lines += lineRows
+    return lines
+}
+
 @Composable
 private fun WidgetView(
     id: Int,
     host: AppWidgetHost,
+    size: WidgetSize,
+    rowHeight: Dp,
+    cellWidth: Dp,
+    maxColumns: Int,
+    maxRows: Int,
+    selected: Boolean,
+    pressGate: WidgetPressGate,
+    onSelect: (Int?) -> Unit,
+    onResize: (Int, Int, Int) -> Unit,
     onDragStart: (Rect) -> Unit,
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
     onDragCancel: () -> Unit
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
+    val cellWidthPx = with(density) { cellWidth.toPx() }.coerceAtLeast(1f)
+    val rowHeightPx = with(density) { rowHeight.toPx() }.coerceAtLeast(1f)
     var bounds by remember(id) { mutableStateOf(Rect()) }
+    var hostView by remember(id) { mutableStateOf<AppWidgetHostView?>(null) }
+    var preview by remember(id, size) { mutableStateOf(size) }
+    val previewWidth = cellWidth * preview.columns + 4.dp * (preview.columns - 1)
+    val previewHeight = rowHeight * preview.rows + 10.dp * (preview.rows - 1)
+    val currentSize = rememberUpdatedState(size)
+
     Box(
         Modifier
-            .fillMaxWidth()
+            .width(previewWidth)
+            .height(previewHeight)
             .padding(vertical = 4.dp)
+            .then(
+                if (selected) Modifier.border(2.dp, NothingRed, RoundedCornerShape(18.dp))
+                else Modifier
+            )
             .onGloballyPositioned { c ->
                 val b = c.boundsInRoot()
                 bounds = Rect(
@@ -1191,65 +1333,169 @@ private fun WidgetView(
                         requireUnconsumed = false,
                         pass = PointerEventPass.Initial
                     )
-                    var dragging = false
-                    var finished = false
-                    var total = Offset.Zero
+                    pressGate.down = true
                     try {
                         while (true) {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val event = awaitPointerEvent(PointerEventPass.Final)
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (change.changedToUp()) {
-                                if (dragging) {
-                                    onDragEnd()
-                                    finished = true
-                                }
-                                break
-                            }
-                            val delta = change.positionChange()
-                            if (!dragging) {
-                                total += delta
-                                if (total.getDistance() > viewConfiguration.touchSlop) break
-                                if (change.uptimeMillis - down.uptimeMillis >=
-                                    viewConfiguration.longPressTimeoutMillis
-                                ) {
-                                    dragging = true
-                                    onDragStart(bounds)
-                                }
-                            } else {
-                                change.consume()
-                                onDrag(delta)
-                            }
+                            if (!change.pressed) break
                         }
                     } finally {
-                        if (dragging && !finished) onDragCancel()
+                        pressGate.down = false
                     }
                 }
+            }
+            .pointerInput(id) {
+                var dragging = false
+                var moved = 0f
+                var pressBounds = Rect()
+                detectDragGesturesAfterLongPress(
+                    onDragStart = {
+                        pressBounds = bounds
+                        onSelect(id)
+                    },
+                    onDragEnd = {
+                        if (dragging) onDragEnd()
+                    },
+                    onDragCancel = {
+                        if (dragging) onDragCancel()
+                    },
+                    onDrag = { _, amount ->
+                        moved += amount.getDistance()
+                        if (!dragging && moved > 6.dp.toPx()) {
+                            dragging = true
+                            onDragStart(pressBounds)
+                        }
+                        if (dragging) onDrag(amount)
+                    }
+                )
             }
     ) {
         AndroidView(
             factory = { ctx ->
                 runCatching {
-                    val info = android.appwidget.AppWidgetManager.getInstance(ctx).getAppWidgetInfo(id)
+                    val info = AppWidgetManager.getInstance(ctx).getAppWidgetInfo(id)
                     host.createView(ctx, id, info).apply {
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
+                            ViewGroup.LayoutParams.MATCH_PARENT
                         )
-                    }
+                    }.also { hostView = it }
                 }.getOrElse {
+                    hostView = null
                     View(ctx).apply {
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
+                            ViewGroup.LayoutParams.MATCH_PARENT
                         )
                     }
                 }
             },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxSize()
+                .onSizeChanged { measured ->
+                    val view = hostView ?: return@onSizeChanged
+                    val width = with(density) {
+                        measured.width.toDp().value.roundToInt()
+                    }.coerceAtLeast(1)
+                    val height = with(density) {
+                        measured.height.toDp().value.roundToInt()
+                    }.coerceAtLeast(1)
+                    val options = Bundle().apply {
+                        putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, width)
+                        putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, height)
+                        putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, width)
+                        putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, height)
+                    }
+                    runCatching {
+                        view.updateAppWidgetSize(options, width, height, width, height)
+                    }
+                }
         )
+        if (selected) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .pointerInput(id) {
+                        detectTapGestures { onSelect(null) }
+                    }
+            )
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.Black.copy(alpha = 0.78f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    "${preview.columns}×${preview.rows}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White
+                )
+            }
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(6.dp)
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(NothingRed)
+                    .border(1.dp, Color.White.copy(alpha = 0.55f), CircleShape)
+                    .pointerInput(id, cellWidthPx, rowHeightPx, maxColumns, maxRows) {
+                        var start = currentSize.value
+                        var dragged = Offset.Zero
+                        detectDragGestures(
+                            onDragStart = {
+                                start = currentSize.value
+                                dragged = Offset.Zero
+                                onSelect(id)
+                            },
+                            onDrag = { change, amount ->
+                                change.consume()
+                                dragged += amount
+                                val columns = (start.columns +
+                                    (dragged.x / cellWidthPx).roundToInt())
+                                    .coerceIn(1, maxColumns)
+                                val rows = (start.rows +
+                                    (dragged.y / rowHeightPx).roundToInt())
+                                    .coerceIn(1, maxRows)
+                                preview = WidgetSize(columns, rows)
+                            },
+                            onDragEnd = {
+                                onResize(id, preview.columns, preview.rows)
+                            },
+                            onDragCancel = {
+                                preview = currentSize.value
+                            }
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(Modifier.size(16.dp)) {
+                    val stroke = 2.dp.toPx()
+                    val color = Color.White
+                    val w = this.size.width
+                    val h = this.size.height
+                    drawLine(
+                        color,
+                        Offset(w * 0.25f, h * 0.75f),
+                        Offset(w * 0.75f, h * 0.25f),
+                        strokeWidth = stroke,
+                        cap = StrokeCap.Round
+                    )
+                    drawLine(
+                        color,
+                        Offset(w * 0.55f, h * 0.75f),
+                        Offset(w * 0.75f, h * 0.55f),
+                        strokeWidth = stroke,
+                        cap = StrokeCap.Round
+                    )
+                }
+            }
+        }
     }
 }
-
 
 private class DrawerDrag(val app: LauncherApp, val origin: Rect) {
     var offset by mutableStateOf(Offset.Zero)
