@@ -1498,13 +1498,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     }.getOrDefault(info.provider.packageName)
                     val label = info.loadLabel(pm)?.toString()?.takeIf { it.isNotBlank() }
                         ?: appLabel
-                    // minWidth/minHeight are px; Android sizes n cells as 70n - 30 dp.
-                    val density = context.resources.displayMetrics.density
-                    val cols = kotlin.math.ceil((info.minWidth / density + 30f) / 70f).toInt()
-                        .coerceIn(1, _state.value.config.columns)
-                    val rows = kotlin.math.ceil((info.minHeight / density + 30f) / 70f).toInt()
-                        .coerceIn(1, HOME_GRID_ROWS)
-                    WidgetChoice(info, appLabel, label, "$cols×$rows")
+                    val cells = widgetCells(info)
+                    WidgetChoice(info, appLabel, label, "${cells.columns}×${cells.rows}")
                 }
                 .sortedWith(compareBy({ it.appLabel.lowercase() }, { it.label.lowercase() }))
         }.getOrDefault(emptyList())
@@ -1696,19 +1691,30 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private fun commitWidget(id: Int) {
         val current = _state.value
         val updated = (current.widgets + id).distinct()
-        val size = current.widgetSizes[id]
-            ?: defaultWidgetSize()
-        val sizes = current.widgetSizes + (id to size)
+        val preferred = current.widgetSizes[id] ?: defaultWidgetSize(id)
         val page = current.currentPage.coerceIn(0, (current.pageCount - 1).coerceAtLeast(0))
-        val placement = findWidgetPlacement(
-            id = id,
-            size = size,
-            columns = current.config.columns,
-            page = page,
-            placements = current.widgetPlacements,
-            sizes = sizes,
-            positions = current.pinPositions
-        )
+        // Try the widget's own size first, then smaller spans until it fits around existing items.
+        val candidates = (preferred.columns downTo 1).flatMap { c ->
+            (preferred.rows downTo 1).map { r -> WidgetSize(c, r) }
+        }.sortedByDescending { it.columns * it.rows }
+        var size = preferred
+        var placement: WidgetPlacement? = null
+        for (candidate in candidates) {
+            placement = findWidgetPlacement(
+                id = id,
+                size = candidate,
+                columns = current.config.columns,
+                page = page,
+                placements = current.widgetPlacements,
+                sizes = current.widgetSizes + (id to candidate),
+                positions = current.pinPositions
+            )
+            if (placement != null) {
+                size = candidate
+                break
+            }
+        }
+        val sizes = current.widgetSizes + (id to size)
         if (placement == null) {
             runCatching { widgetHost.deleteAppWidgetId(id) }
             _state.update {
@@ -1868,7 +1874,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         widgets.forEach { id ->
             val size = saved[id]
             if (size == null) {
-                saved[id] = defaultWidgetSize()
+                saved[id] = defaultWidgetSize(id)
                 changed = true
             } else if (size.columns > columns) {
                 saved[id] = size.copy(columns = columns)
@@ -1879,7 +1885,22 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         return saved
     }
 
-    private fun defaultWidgetSize(): WidgetSize = WidgetSize(1, 1)
+    private fun defaultWidgetSize(id: Int): WidgetSize =
+        widgetManager.getAppWidgetInfo(id)?.let(::widgetCells) ?: WidgetSize(1, 1)
+
+    /** The provider's preferred cell span (Android 12+ targetCell*), else derived from its min size. */
+    private fun widgetCells(info: AppWidgetProviderInfo): WidgetSize {
+        // minWidth/minHeight are px; Android sizes n cells as 70n - 30 dp.
+        val density = getApplication<Application>().resources.displayMetrics.density
+        val cols = info.targetCellWidth.takeIf { it > 0 }
+            ?: kotlin.math.ceil((info.minWidth / density + 30f) / 70f).toInt()
+        val rows = info.targetCellHeight.takeIf { it > 0 }
+            ?: kotlin.math.ceil((info.minHeight / density + 30f) / 70f).toInt()
+        return WidgetSize(
+            cols.coerceIn(1, _state.value.config.columns),
+            rows.coerceIn(1, HOME_GRID_ROWS)
+        )
+    }
 
     private fun syncWidgetPlacements(
         widgets: List<Int>,
