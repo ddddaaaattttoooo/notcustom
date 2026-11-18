@@ -2,65 +2,85 @@
   <img src="assets/notcustom-banner.svg" alt="NotCustom — Make home yours" width="760" />
 </p>
 
-<p align="center">ANDROID 12+ &nbsp;•&nbsp; NO ROOT &nbsp;•&nbsp; MIT LICENSE</p>
-
 <p align="center">
-  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.25-beta"><img alt="Download NotCustom 0.3.25-beta" src="https://img.shields.io/badge/Download-NotCustom%200.3.25--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
+  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.26-beta"><img alt="Download NotCustom 0.3.26-beta" src="https://img.shields.io/badge/Download-NotCustom%200.3.26--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
 </p>
 
-NotCustom is an Android launcher with a flexible Home screen, app drawer, widgets, and optional Shizuku-powered system tweaks. It takes visual inspiration from Nothing OS while keeping Nothing Launcher intact.
+<p align="center">
+  <img alt="Android 12+" src="https://img.shields.io/badge/Android-12%2B-111214?style=flat-square" />
+  <img alt="No root" src="https://img.shields.io/badge/root-not%20needed-111214?style=flat-square" />
+  <img alt="No tracking" src="https://img.shields.io/badge/tracking-none-111214?style=flat-square" />
+  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-111214?style=flat-square" />
+</p>
 
-> Not affiliated with Nothing Technology Limited. NotCustom does not require root and does not add Glyph features.
+NotCustom is a monochrome Android launcher with pages, folders, widgets, a smart app drawer and notification dots, plus optional Shizuku-powered system tweaks. It takes visual cues from Nothing OS and leaves your phone's own launcher untouched.
 
-## Install
+> Not affiliated with Nothing Technology Limited. NotCustom needs no root and adds no Glyph features.
 
-### Download the APK
+## Screenshots
 
-Download the APK from [GitHub Releases](https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.25-beta).
-
-### Install on your phone
-
-1. Open the release page on your Android phone and download `NotCustom-…-release.apk`.
-2. Open the downloaded file. If Android asks, allow your browser or Files app to install unknown apps, then confirm **Install**.
-3. Press Home and choose **NotCustom Home**. Choose **Always** if you want it as your default launcher. You can change this later in Android's Default apps settings.
-4. Optional: open Home Settings to enable accessibility access for screen-off and notification-shade gestures. Android may require **App info → Allow restricted settings** for a sideloaded build.
-
-To update, install the newer APK over the existing app. Beta APKs use one shared signing key, so updates install in place and keep NotCustom's saved layout and settings.
-
-## Compatibility
-
-- **Android 12 or newer** is required. NotCustom Home uses standard Android launcher APIs and is intended to work on Android phones from different manufacturers, including Nothing, Pixel, and Samsung devices.
-- **Verified device:** Nothing Phone 3a Lite running Nothing OS 4.x. Other brands and Android versions have not all been tested; drawer behavior, widgets, gestures, and launcher selection can vary by manufacturer.
-- **System tweaks are device-dependent.** The optional FEEL/DISPLAY tweaks require Shizuku and may not be supported on every Android build. The launcher works without Shizuku.
+<table>
+  <tr>
+    <td align="center"><img src="assets/screenshots/home.png" width="200" alt="Home screen with apps, a folder, a widget and the dock" /><br /><sub><b>Home</b></sub></td>
+    <td align="center"><img src="assets/screenshots/drawer.png" width="200" alt="App drawer in grid mode" /><br /><sub><b>App drawer</b></sub></td>
+    <td align="center"><img src="assets/screenshots/smart.png" width="200" alt="SMART drawer grouping apps into categories" /><br /><sub><b>SMART drawer</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/folder.png" width="200" alt="An open folder on Home" /><br /><sub><b>Folders</b></sub></td>
+    <td align="center"><img src="assets/screenshots/drag.png" width="200" alt="Dragging an app with Remove and App info targets" /><br /><sub><b>Drag and drop</b></sub></td>
+    <td align="center"><img src="assets/screenshots/menu.png" width="200" alt="App menu with shortcuts and actions" /><br /><sub><b>App menu</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/widgets.png" width="200" alt="Widget picker" /><br /><sub><b>Widgets</b></sub></td>
+    <td align="center"><img src="assets/screenshots/settings.png" width="200" alt="Home settings" /><br /><sub><b>Home settings</b></sub></td>
+    <td align="center"><img src="assets/screenshots/setup.png" width="200" alt="NotCustom setup screen" /><br /><sub><b>Setup</b></sub></td>
+  </tr>
+</table>
 
 ## Features
 
-### Home screen
+**Home screen**
+- Multiple pages, drag-and-drop placement, and a five-slot dock
+- Folders: drop one app onto another, rename the folder, and drag apps back out
+- Android widgets at their natural size, resizable from the corner handle
+- Notification dots, app shortcuts, and pinned shortcuts from other apps
+- Hold an app for its menu, or drag it onto REMOVE, UNINSTALL or APP INFO
+- Clock, battery status or next alarm in the header, in 12 or 24-hour time
 
-- Multiple pages with drag-and-drop app placement
-- A compact dock fixed at the bottom, editable by dragging apps between the dock and Home
-- Pick up an app or widget and drop it on REMOVE, or on UNINSTALL while still holding it; system and device-admin apps show APP INFO instead
-- Drawer in GRID, LIST, or SMART mode
-- App labels, icon size, columns, icon packs, and monochrome icons
-- Clock with 12/24-hour format, battery status, or next alarm in the header
-- Android app widgets, a searchable widget picker, and per-app widget adding from the long-press menu
-- Swipe up for the drawer; optional gestures for notifications and screen-off
+**App drawer**
+- GRID, LIST and SMART modes; SMART groups apps into categories like Nothing OS
+- Instant search, hidden apps, work-profile and cloned apps with badges
+- Drag any app straight onto a Home page or the dock
 
-### Optional system tools
+**Look and feel**
+- Columns, icon size, icon packs, monochrome icons, labels and search bar
+- Gestures: swipe up for apps, swipe down for notifications, optional double-tap to lock
 
-- FEEL and DISPLAY presets, density and font-scale controls, and a Quick Settings tile
-- Shizuku support for protected settings; no root required
+**Optional system tools** (through Shizuku, no root)
+- Animation speed presets, display density and font scale, and a Quick Settings tile
 
-## Updates
+## Install
 
-Home Settings checks GitHub Releases for a newer beta and falls back to GitLab. When one is available, **INSTALL** downloads the APK and opens Android's installer. Beta builds use the debug signing key, so Android may reject an update over a differently signed copy.
+1. Open the [release page](https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.26-beta) on your phone and download `NotCustom-0.3.26-beta-release.apk`.
+2. Open the file. If Android asks, allow your browser or Files app to install unknown apps, then tap **Install**.
+3. Open NotCustom and tap **SET AS HOME**, or press Home and choose **NotCustom Home** → **Always**.
+4. Optional: in Home Settings, turn on notification dots and gesture access. Sideloaded apps may need **App info → Allow restricted settings** first.
+
+**Updating:** install the newer APK over the old one, or tap **CHECK** under Software update in Home Settings. Releases since 0.3.23 share one signing key, so updates install in place and keep your layout. Coming from an older build? Uninstall it once first.
+
+## Compatibility
+
+- **Android 12 or newer.** NotCustom uses standard launcher APIs and should work on any brand, including Nothing, Pixel and Samsung.
+- **Tested on** a Nothing Phone (3a) Lite with Nothing OS 4.x and on the Android emulator. Gestures, widgets and launcher selection can vary by manufacturer.
+- **System tweaks** need Shizuku and may not be supported on every Android build. The launcher works without them.
 
 ## Permissions and privacy
 
-- Internet access is used only to check for and download NotCustom updates from GitHub or GitLab. There is no analytics, tracking, or background upload. Battery and next-alarm header options read on-device information.
-- Accessibility access is optional and used only for requested global actions such as opening notifications or locking the screen. It does not read screen content.
-- Shizuku is optional and used only for system-level tweaks.
-- Launcher preferences, app placements, and widget IDs are stored locally.
+- **Internet** is used only to check for and download NotCustom updates from its GitHub and GitLab release pages. No analytics, tracking or background uploads.
+- **Notification access** (optional) only counts which apps have notifications, for the dots. Notification content is never read or stored.
+- **Accessibility** (optional) only performs actions you ask for, like opening notifications or locking the screen. It does not read the screen.
+- **Shizuku** (optional) is used only for the system tweaks.
+- Your layout, folders and settings stay on the phone.
 
 ## Build from source
 
@@ -72,13 +92,13 @@ cd notcustom
 ./gradlew assembleDebug
 ```
 
-The APK is created under `app/build/outputs/apk/debug/`. Release builds are signed with the Android debug key for local testing; configure your own signing key before distributing a production build.
+The APK is written to `app/build/outputs/apk/debug/`. Release builds use the shared beta key in `keystore/`; use your own key before distributing a fork.
 
 ## Help and contributions
 
-Found a bug? Open a [GitHub issue](https://github.com/ddddaaaattttoooo/notcustom/issues). Please include your phone model, Android version, NotCustom version, and steps to reproduce. Don't include private logs or personal data.
+Found a bug? Open an [issue](https://github.com/ddddaaaattttoooo/notcustom/issues) with your phone model, Android version, NotCustom version and steps to reproduce. Please leave out private logs and personal data.
 
-Merge requests and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the build and review workflow.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the build and review workflow.
 
 ## License
 
