@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -35,6 +36,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -43,6 +45,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -87,8 +90,11 @@ fun AppMenuSheet(
         onDismissRequest = viewModel::dismissMenu,
         containerColor = Surface0,
         contentColor = Paper,
-        dragHandle = { BottomSheetDefaults.DragHandle() }
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+        contentWindowInsets = { WindowInsets(0) },
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ) {
+        DarkSheetSystemBars()
         val icon by produceState<ImageBitmap?>(initialValue = null, app.component, state.iconPack) {
             value = viewModel.loadIcon(app)
         }
@@ -276,8 +282,11 @@ fun HomeMenuSheet(state: LauncherState, viewModel: LauncherViewModel) {
         onDismissRequest = viewModel::closeHomeMenu,
         containerColor = Surface0,
         contentColor = Paper,
-        dragHandle = { BottomSheetDefaults.DragHandle() }
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+        contentWindowInsets = { WindowInsets(0) },
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ) {
+        DarkSheetSystemBars()
         Column(
             Modifier
                 .fillMaxWidth()
@@ -343,8 +352,11 @@ fun LauncherSettingsSheet(
         onDismissRequest = viewModel::closeSettings,
         containerColor = Surface0,
         contentColor = Paper,
-        dragHandle = { BottomSheetDefaults.DragHandle() }
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+        contentWindowInsets = { WindowInsets(0) },
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ) {
+        DarkSheetSystemBars()
         Column(
             Modifier
                 .fillMaxWidth()
@@ -802,5 +814,16 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
                 uncheckedBorderColor = Line
             )
         )
+    }
+}
+
+/** M3 sheets follow the system theme; NotCustom is always dark, so keep the nav bar dark too. */
+@Composable
+private fun DarkSheetSystemBars() {
+    val view = androidx.compose.ui.platform.LocalView.current
+    SideEffect {
+        val window = (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window ?: return@SideEffect
+        window.isNavigationBarContrastEnforced = false
+        androidx.core.view.WindowCompat.getInsetsController(window, view).isAppearanceLightNavigationBars = false
     }
 }
