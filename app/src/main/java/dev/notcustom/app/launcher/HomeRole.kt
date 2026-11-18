@@ -15,3 +15,6 @@ fun homeRoleIntent(context: Context): Intent? {
 }
 
 fun homeSettingsIntent(): Intent = Intent(Settings.ACTION_HOME_SETTINGS)
+
+fun isDefaultHome(context: Context): Boolean =
+    context.getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_HOME) == true

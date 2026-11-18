@@ -6,8 +6,8 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,10 +44,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import dev.notcustom.app.BuildConfig
+import dev.notcustom.app.launcher.isDefaultHome
+import dev.notcustom.app.launcher.ui.DotGlyph
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.notcustom.app.core.AnimScales
@@ -81,6 +85,11 @@ private val animPresets = listOf(
 fun NotCustomApp(viewModel: NotCustomViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var isHome by remember { mutableStateOf(isDefaultHome(context)) }
+    LifecycleResumeEffect(Unit) {
+        isHome = isDefaultHome(context)
+        onPauseOrDispose { }
+    }
 
     Box(
         Modifier
@@ -95,18 +104,18 @@ fun NotCustomApp(viewModel: NotCustomViewModel = viewModel()) {
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
         ) {
-            Spacer(Modifier.height(18.dp))
-            Header(state.shizuku)
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(36.dp))
+            Hero()
+            Spacer(Modifier.height(32.dp))
 
             Message(state.message) { viewModel.clearMessage() }
 
-            HomeCard(context)
+            HomeCard(context, isHome) { isHome = isDefaultHome(context) }
             Spacer(Modifier.height(14.dp))
-
-            when (state.shizuku) {
-                ShizukuState.READY -> ReadyContent(state, viewModel)
-                else -> SetupCard(state.shizuku, context, viewModel)
+            SetupCard(state.shizuku, context, viewModel)
+            if (state.shizuku == ShizukuState.READY) {
+                Spacer(Modifier.height(14.dp))
+                ReadyContent(state, viewModel)
             }
 
             Spacer(Modifier.height(16.dp))
@@ -117,66 +126,32 @@ fun NotCustomApp(viewModel: NotCustomViewModel = viewModel()) {
 }
 
 @Composable
-private fun Header(shizuku: ShizukuState) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        DotMark(Modifier.size(44.dp))
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text("NUANCE", style = MaterialTheme.typography.displaySmall)
-            Text(
-                "nothing os, uncapped",
-                style = MaterialTheme.typography.bodySmall,
-                color = Muted
-            )
+private fun Hero() {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier
+                .size(96.dp)
+                .background(Surface0, RoundedCornerShape(30.dp))
+                .border(1.dp, Line, RoundedCornerShape(30.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            DotGlyph(Modifier.size(60.dp))
         }
-        StatusPill(shizuku)
-    }
-}
-
-@Composable
-private fun DotMark(modifier: Modifier = Modifier) {
-    Canvas(modifier) {
-        val step = size.width / 4f
-        val radius = step * 0.18f
-        for (row in 0..2) {
-            for (col in 0..2) {
-                drawCircle(
-                    color = Paper,
-                    radius = radius,
-                    center = Offset(step * (col + 1), step * (row + 1))
-                )
-            }
-        }
-        drawCircle(
-            color = NothingRed,
-            radius = radius * 1.05f,
-            center = Offset(step * 2, step * 2)
+        Spacer(Modifier.height(20.dp))
+        Text(
+            "NOTCUSTOM",
+            style = MaterialTheme.typography.displaySmall.copy(letterSpacing = 6.sp),
+            color = Paper
         )
+        Spacer(Modifier.height(6.dp))
+        Text("MAKE HOME YOURS", style = MaterialTheme.typography.labelSmall, color = Muted)
+        Spacer(Modifier.height(14.dp))
+        Pill("v${BuildConfig.VERSION_NAME}", Muted)
     }
 }
 
 @Composable
-private fun StatusPill(shizuku: ShizukuState) {
-    val label: String
-    val color: Color
-    when (shizuku) {
-        ShizukuState.READY -> {
-            label = "READY"
-            color = Ok
-        }
-        ShizukuState.NOT_INSTALLED -> {
-            label = "NO SHIZUKU"
-            color = NothingRed
-        }
-        ShizukuState.NOT_RUNNING -> {
-            label = "SERVICE OFF"
-            color = Warn
-        }
-        ShizukuState.PERMISSION_DENIED -> {
-            label = "NO ACCESS"
-            color = Warn
-        }
-    }
+private fun Pill(label: String, color: Color) {
     Surface(
         color = color.copy(alpha = 0.12f),
         shape = CircleShape,
@@ -188,6 +163,48 @@ private fun StatusPill(shizuku: ShizukuState) {
             color = color,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
         )
+    }
+}
+
+@Composable
+private fun ShizukuPill(shizuku: ShizukuState) = when (shizuku) {
+    ShizukuState.READY -> Pill("READY", Ok)
+    ShizukuState.NOT_INSTALLED -> Pill("NOT INSTALLED", Muted)
+    ShizukuState.NOT_RUNNING -> Pill("SERVICE OFF", Warn)
+    ShizukuState.PERMISSION_DENIED -> Pill("NO ACCESS", Warn)
+}
+
+@Composable
+private fun StepCard(
+    number: String,
+    title: String,
+    subtitle: String,
+    status: @Composable () -> Unit,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Surface(
+        color = Surface0,
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, Line),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(number, style = MaterialTheme.typography.labelSmall, color = NothingRed)
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Paper,
+                    modifier = Modifier.weight(1f)
+                )
+                status()
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Muted)
+            Spacer(Modifier.height(16.dp))
+            content()
+        }
     }
 }
 
@@ -408,7 +425,12 @@ private fun SetupCard(
     context: Context,
     viewModel: NotCustomViewModel
 ) {
-    SectionCard("GET STARTED", "no root. no computer after setup.") {
+    StepCard(
+        "02",
+        "SYSTEM TWEAKS",
+        "optional · animation speed, density, presets",
+        status = { ShizukuPill(shizuku) }
+    ) {
         val body = when (shizuku) {
             ShizukuState.NOT_INSTALLED ->
                 "Install Shizuku, enable Wireless debugging in Developer options, then start the Shizuku service."
@@ -416,120 +438,94 @@ private fun SetupCard(
                 "Shizuku is installed but its service is off. Open Shizuku and start it over Wireless debugging."
             ShizukuState.PERMISSION_DENIED ->
                 "Shizuku is running. Grant NotCustom access so it can apply system tweaks."
-            ShizukuState.READY -> ""
+            ShizukuState.READY ->
+                "Connected through Shizuku. Your tweaks are below."
         }
-        Text(body, style = MaterialTheme.typography.bodyMedium, color = Muted)
+        Text(body, style = MaterialTheme.typography.bodySmall, color = Muted)
+        if (shizuku == ShizukuState.READY) return@StepCard
         Spacer(Modifier.height(16.dp))
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             when (shizuku) {
-                ShizukuState.NOT_INSTALLED -> Button(
-                    onClick = {
-                        openUrl(
-                            context,
-                            "https://play.google.com/store/apps/details?id=moe.shizuku.privileged.api"
-                        )
-                    },
-                    shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Paper,
-                        contentColor = Ink
-                    )
-                ) {
-                    Text("GET SHIZUKU", style = MaterialTheme.typography.labelSmall)
+                ShizukuState.NOT_INSTALLED -> PrimaryButton("GET SHIZUKU") {
+                    openUrl(context, "https://play.google.com/store/apps/details?id=moe.shizuku.privileged.api")
                 }
-
-                ShizukuState.NOT_RUNNING -> Button(
-                    onClick = { openPackage(context, "moe.shizuku.privileged.api") },
-                    shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Paper,
-                        contentColor = Ink
-                    )
-                ) {
-                    Text("OPEN SHIZUKU", style = MaterialTheme.typography.labelSmall)
+                ShizukuState.NOT_RUNNING -> PrimaryButton("OPEN SHIZUKU") {
+                    openPackage(context, "moe.shizuku.privileged.api")
                 }
-
                 ShizukuState.PERMISSION_DENIED -> {
-                    Button(
-                        onClick = viewModel::requestPermission,
-                        shape = RoundedCornerShape(50),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Paper,
-                            contentColor = Ink
-                        )
-                    ) {
-                        Text("GRANT ACCESS", style = MaterialTheme.typography.labelSmall)
-                    }
-                    OutlinedButton(
-                        onClick = { openPackage(context, "moe.shizuku.privileged.api") },
-                        shape = RoundedCornerShape(50),
-                        border = BorderStroke(1.dp, Line)
-                    ) {
-                        Text(
-                            "OPEN SHIZUKU",
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
+                    PrimaryButton("GRANT ACCESS", viewModel::requestPermission)
+                    SecondaryButton("OPEN SHIZUKU") { openPackage(context, "moe.shizuku.privileged.api") }
                 }
-
                 ShizukuState.READY -> Unit
             }
-            OutlinedButton(
-                onClick = viewModel::refresh,
-                shape = RoundedCornerShape(50),
-                border = BorderStroke(1.dp, Line)
-            ) {
-                Text("REFRESH", style = MaterialTheme.typography.labelSmall)
-            }
+            SecondaryButton("REFRESH", viewModel::refresh)
         }
         Spacer(Modifier.height(14.dp))
         Text(
             "Shizuku stops on reboot. Start it again and NotCustom reconnects automatically.",
             style = MaterialTheme.typography.bodySmall,
-            color = Muted
+            color = Muted.copy(alpha = 0.7f)
         )
     }
 }
 
 @Composable
-private fun AboutCard() {
-    Surface(
-        color = Color.Transparent,
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, Line),
-        modifier = Modifier.fillMaxWidth()
+private fun PrimaryButton(label: String, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        colors = ButtonDefaults.buttonColors(containerColor = Paper, contentColor = Ink)
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Text("ABOUT", style = MaterialTheme.typography.labelSmall, color = Muted)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Built for Nothing OS 4.0 and newer, on every Nothing and CMF phone - it uses " +
-                    "standard Android settings, so it is not tied to one model. That includes the " +
-                    "Phone (3a) Lite. Nothing here is device-specific, so future phones work too. " +
-                    "NotCustom talks to Android through Shizuku, so it only writes reversible " +
-                    "Settings values and a display-density override. No system files, no root, " +
-                    "nothing that can brick a phone. Without root, Android exposes animation speed " +
-                    "only; custom curves need LSPosed.",
-                style = MaterialTheme.typography.bodySmall,
-                color = Muted
-            )
-        }
+        Text(label, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@Composable
+private fun SecondaryButton(label: String, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        border = BorderStroke(1.dp, Line),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = Paper)
+    ) {
+        Text(label, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@Composable
+private fun AboutCard() {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+        Text("ABOUT", style = MaterialTheme.typography.labelSmall, color = Muted)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "NotCustom Home runs on any Android 12+ phone with no special access. System tweaks go " +
+                "through Shizuku and only write reversible Settings values and a display-density " +
+                "override: no root, no system files, nothing that can brick a phone.",
+            style = MaterialTheme.typography.bodySmall,
+            color = Muted.copy(alpha = 0.7f)
+        )
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun HomeCard(context: Context) {
+private fun HomeCard(context: Context, isHome: Boolean, onRoleResult: () -> Unit) {
     val role = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
-    ) { }
-    SectionCard("HOME", "NotCustom Home - you set the rules") {
+    ) { onRoleResult() }
+    val openHome = { context.startActivity(Intent(context, LauncherActivity::class.java)) }
+    StepCard(
+        "01",
+        "HOME SCREEN",
+        if (isHome) "NotCustom is your home screen" else "make NotCustom your home screen",
+        status = { if (isHome) Pill("ACTIVE", Ok) else Pill("NOT SET", Warn) }
+    ) {
         Text(
-            "A Nothing-style home screen with no ceiling: column count, icon size, labels, " +
-                "search bar, monochrome icons, dock, pinning and hiding. No root, no Shizuku needed.",
+            "Pages, folders, widgets, dock, smart drawer, icon packs and notification dots. " +
+                "No root, no Shizuku needed.",
             style = MaterialTheme.typography.bodySmall,
             color = Muted
         )
@@ -538,36 +534,19 @@ private fun HomeCard(context: Context) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Button(
-                onClick = { role.launch(homeRoleIntent(context) ?: homeSettingsIntent()) },
-                shape = RoundedCornerShape(50),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Paper,
-                    contentColor = Ink
+            if (isHome) {
+                PrimaryButton("OPEN HOME", openHome)
+            } else {
+                PrimaryButton("SET AS HOME") {
+                    role.launch(homeRoleIntent(context) ?: homeSettingsIntent())
+                }
+                SecondaryButton("PREVIEW", openHome)
+            }
+            SecondaryButton("HOME SETTINGS") {
+                context.startActivity(
+                    Intent(context, LauncherActivity::class.java)
+                        .putExtra(LauncherActivity.EXTRA_OPEN_SETTINGS, true)
                 )
-            ) {
-                Text("SET AS HOME", style = MaterialTheme.typography.labelSmall)
-            }
-            OutlinedButton(
-                onClick = {
-                    context.startActivity(Intent(context, LauncherActivity::class.java))
-                },
-                shape = RoundedCornerShape(50),
-                border = BorderStroke(1.dp, Line)
-            ) {
-                Text("OPEN HOME", style = MaterialTheme.typography.labelSmall)
-            }
-            OutlinedButton(
-                onClick = {
-                    context.startActivity(
-                        Intent(context, LauncherActivity::class.java)
-                            .putExtra(LauncherActivity.EXTRA_OPEN_SETTINGS, true)
-                    )
-                },
-                shape = RoundedCornerShape(50),
-                border = BorderStroke(1.dp, Line)
-            ) {
-                Text("HOME SETTINGS", style = MaterialTheme.typography.labelSmall)
             }
         }
     }
