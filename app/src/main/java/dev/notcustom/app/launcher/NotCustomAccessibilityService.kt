@@ -7,26 +7,36 @@ import android.content.Intent
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
+import java.lang.ref.WeakReference
 
 class NotCustomAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        instance = this
+        instance = WeakReference(this)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
 
     override fun onInterrupt() = Unit
 
+    override fun onUnbind(intent: Intent?): Boolean {
+        clearInstance()
+        return super.onUnbind(intent)
+    }
+
     override fun onDestroy() {
-        if (instance === this) instance = null
+        clearInstance()
         super.onDestroy()
+    }
+
+    private fun clearInstance() {
+        if (instance?.get() === this) instance = null
     }
 
     companion object {
         @Volatile
-        private var instance: NotCustomAccessibilityService? = null
+        private var instance: WeakReference<NotCustomAccessibilityService>? = null
 
         fun isEnabled(context: Context): Boolean {
             val manager = context.getSystemService(AccessibilityManager::class.java) ?: return false
@@ -36,10 +46,12 @@ class NotCustomAccessibilityService : AccessibilityService() {
         }
 
         fun lockScreen(): Boolean =
-            instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN) == true
+            instance?.get()
+                ?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN) == true
 
         fun openNotifications(): Boolean =
-            instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS) == true
+            instance?.get()
+                ?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS) == true
 
         fun openAccessibilitySettings(context: Context) {
             runCatching {

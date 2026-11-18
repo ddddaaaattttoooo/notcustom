@@ -26,7 +26,6 @@ class LauncherActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
         )
-        viewModel.startWidgets()
         setContent {
             NotCustomTheme {
                 LauncherRoot(viewModel)
@@ -35,26 +34,38 @@ class LauncherActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
+    // Widgets only need updates while Home is visible; listening in the background costs battery.
+    override fun onStart() {
+        super.onStart()
+        viewModel.startWidgets()
+    }
+
+    override fun onStop() {
+        viewModel.stopWidgets()
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
         viewModel.refreshAccessibility()
         viewModel.onActivityResumed()
     }
 
-    override fun onDestroy() {
-        viewModel.stopWidgets()
-        super.onDestroy()
-    }
-
     override fun onNewIntent(intent: Intent) {
+        // Focus is still ours only when Home was already in front when the button was pressed.
+        val alreadyOnHome = hasWindowFocus()
         super.onNewIntent(intent)
         setIntent(intent)
-        viewModel.closeDrawer()
+        if (intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_HOME)) {
+            viewModel.onHomePressed(alreadyOnHome)
+        }
         handleIntent(intent)
     }
 
     private fun handleIntent(intent: Intent?) {
-        if (intent?.action == LauncherApps.ACTION_CONFIRM_PIN_APPWIDGET) {
+        if (intent?.action == LauncherApps.ACTION_CONFIRM_PIN_APPWIDGET ||
+            intent?.action == LauncherApps.ACTION_CONFIRM_PIN_SHORTCUT
+        ) {
             viewModel.handlePinRequest(intent)
             return
         }

@@ -66,11 +66,16 @@ data class LauncherState(
     val homeMenuOpen: Boolean = false,
     val widgets: List<Int> = emptyList(),
     val widgetSizes: Map<Int, WidgetSize> = emptyMap(),
+    val widgetPlacements: Map<Int, WidgetPlacement> = emptyMap(),
+    val folders: Map<String, HomeFolder> = emptyMap(),
+    val pinnedShortcuts: List<LauncherApp> = emptyList(),
+    val openFolder: String? = null,
     val widgetPickerOpen: Boolean = false,
     val widgetPickerPackage: String? = null,
     val widgetConfigRequest: Intent? = null,
     val iconRevision: Int = 0,
     val accessibilityEnabled: Boolean = false,
+    val notificationDotsEnabled: Boolean = false,
     val returning: ReturnTransition? = null,
     val update: UpdateState = UpdateState(),
     val message: String? = null
@@ -108,6 +113,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private var pendingConfigId: Int? = null
     private var pendingBindId: Int? = null
     private var reloadJob: Job? = null
+    private var pendingPinRequest: Intent? = null
 
     private val appCallback = object : LauncherApps.Callback() {
         override fun onPackageRemoved(packageName: String, user: UserHandle) = scheduleReload()
@@ -158,6 +164,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun reload() {
         viewModelScope.launch {
             val apps = withContext(Dispatchers.IO) { loadApps() }
+            val shortcuts = withContext(Dispatchers.IO) { loadPinnedShortcuts() }
             val iconPacks = withContext(Dispatchers.IO) { icons.availablePacks() }
             val iconPack = prefs.iconPack?.takeIf { selected ->
                 iconPacks.any { it.packageName == selected }
@@ -166,12 +173,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             icons.setSelectedPack(iconPack)
             val widgets = loadWidgets()
             val widgetSizes = syncWidgetSizes(widgets, prefs.columns)
+            val widgetPlacements = syncWidgetPlacements(widgets, widgetSizes, prefs.columns, prefs.pinPositions)
             if (apps.isNotEmpty()) {
                 if (!prefs.initialized) applyDefaults(apps)
-                val valid = apps.map { it.component }.toSet()
                 val hidden = prefs.hidden
-                val pinned = prefs.pinned.filter { it in valid && it.packageName !in hidden }
-                val dock = prefs.dock.filter { it in valid && it.packageName !in hidden }
+                val validApps = apps.filter { it.packageName !in hidden }.map { it.component }.toSet()
+                val folders = cleanFolders(validApps)
+                val valid = validApps + shortcuts.map { it.component } +
+                    folders.map { folderComponent(it.id) }
+                val pinned = prefs.pinned.filter { it in valid }
+                val dock = prefs.dock.filter { it in valid }
                 val allPinned = (pinned + dock).distinct()
                 val pinPositions = normalizePinPositions(allPinned)
                 val unifiedPinned = pinPositions.entries.sortedBy { it.value }.map { it.key }
@@ -179,8 +190,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 val pageCount = maxOf(
                     prefs.pageCount,
                     neededPages(pinPositions, config.columns),
+                    (widgetPlacements.values.maxOfOrNull { it.page + 1 } ?: 1),
                     1
-                )
+                ).coerceAtMost(MAX_HOME_PAGES)
                 val currentPage = prefs.currentPage.coerceIn(0, pageCount - 1)
                 prefs.pageCount = pageCount
                 prefs.currentPage = currentPage
@@ -195,8 +207,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         dock = pinPositions.entries.filter { it.value < 0 }
                             .sortedByDescending { it.value }.map { it.key },
                         hidden = hidden,
+                        folders = folders.associateBy { f -> f.id },
+                        pinnedShortcuts = shortcuts,
+                        openFolder = it.openFolder?.takeIf { id -> folders.any { f -> f.id == id } },
                         widgets = widgets,
                         widgetSizes = widgetSizes,
+                        widgetPlacements = widgetPlacements,
                         config = config,
                         drawerMode = prefs.drawerMode,
                         iconPacks = iconPacks,
@@ -208,12 +224,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 val preload = ((unifiedPinned).mapNotNull { byComponent[it] } + apps)
                     .distinctBy { it.key }
                 viewModelScope.launch { preload.forEach { icons.load(it) } }
+                pendingPinRequest?.let { pending ->
+                    pendingPinRequest = null
+                    handlePinRequest(pending)
+                }
             } else {
                 _state.update {
                     it.copy(
                         loading = false,
                         widgets = widgets,
                         widgetSizes = widgetSizes,
+                        widgetPlacements = widgetPlacements,
                         iconPacks = iconPacks,
                         iconPack = iconPack,
                         iconRevision = it.iconRevision + 1
@@ -223,9 +244,202 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    suspend fun loadIcon(app: LauncherApp): ImageBitmap? = icons.load(app)
+    private val shortcutIcons = java.util.concurrent.ConcurrentHashMap<String, ImageBitmap>()
 
-    fun cachedIcon(app: LauncherApp): ImageBitmap? = icons.peek(app.key)
+    suspend fun loadIcon(app: LauncherApp): ImageBitmap? = when {
+        app.folderId != null -> null
+        app.shortcutId != null -> shortcutIcons[app.key]
+            ?: loadShortcutIcon(app)?.also { shortcutIcons[app.key] = it }
+        else -> icons.load(app)
+    }
+
+    fun cachedIcon(app: LauncherApp): ImageBitmap? =
+        if (app.isApp) icons.peek(app.key) else shortcutIcons[app.key]
+
+    private suspend fun loadShortcutIcon(app: LauncherApp): ImageBitmap? =
+        withContext(Dispatchers.IO) {
+            val id = app.shortcutId ?: return@withContext null
+            runCatching {
+                val query = LauncherApps.ShortcutQuery()
+                    .setPackage(app.packageName)
+                    .setShortcutIds(listOf(id))
+                    .setQueryFlags(
+                        LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED or
+                            LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC or
+                            LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST
+                    )
+                val info = launcherApps.getShortcuts(query, app.user)?.firstOrNull()
+                    ?: return@runCatching null
+                val density = getApplication<Application>().resources.displayMetrics.densityDpi
+                launcherApps.getShortcutBadgedIconDrawable(info, density)
+                    ?.toBitmap(168, 168)
+                    ?.asImageBitmap()
+            }.getOrNull()
+        }
+
+    private fun shortcutItem(info: ShortcutInfo) = LauncherApp(
+        component = shortcutComponent(info.`package`, info.id),
+        label = info.shortLabel?.toString()?.takeIf { it.isNotBlank() }
+            ?: info.longLabel?.toString()?.takeIf { it.isNotBlank() }
+            ?: info.`package`,
+        packageName = info.`package`,
+        user = info.userHandle,
+        shortcutId = info.id
+    )
+
+    /** Shortcuts this launcher pinned; only works while NotCustom is the default Home. */
+    private fun loadPinnedShortcuts(): List<LauncherApp> = runCatching {
+        if (!launcherApps.hasShortcutHostPermission()) return emptyList()
+        val query = LauncherApps.ShortcutQuery()
+            .setQueryFlags(LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED)
+        launcherApps.getShortcuts(query, Process.myUserHandle()).orEmpty()
+            .filter { it.isEnabled }
+            .map(::shortcutItem)
+    }.getOrDefault(emptyList())
+
+    /** Drops vanished apps from folders; a folder left with one app turns back into that app. */
+    private fun cleanFolders(validApps: Set<ComponentName>): List<HomeFolder> {
+        val saved = prefs.folders
+        val positions = prefs.pinPositions.toMutableMap()
+        var positionsChanged = false
+        val kept = mutableListOf<HomeFolder>()
+        saved.forEach { folder ->
+            val apps = folder.apps.filter { it in validApps }.distinct()
+            val component = folderComponent(folder.id)
+            val slot = positions[component] ?: return@forEach
+            if (apps.size >= 2) {
+                kept += folder.copy(apps = apps)
+            } else {
+                positions.remove(component)
+                apps.firstOrNull()?.let { if (it !in positions) positions[it] = slot }
+                positionsChanged = true
+            }
+        }
+        if (kept != saved) prefs.folders = kept
+        if (positionsChanged) writePlacements(positions)
+        return kept
+    }
+
+    fun openFolder(id: String) {
+        _state.update { it.copy(openFolder = id, menuApp = null, homeMenuOpen = false) }
+    }
+
+    fun closeFolder() {
+        _state.update { it.copy(openFolder = null) }
+    }
+
+    fun renameFolder(id: String, name: String) {
+        val folder = _state.value.folders[id] ?: return
+        val clean = name.trim().take(40).ifEmpty { "Folder" }
+        if (clean == folder.name) return
+        val folders = _state.value.folders + (id to folder.copy(name = clean))
+        prefs.folders = folders.values.toList()
+        _state.update { it.copy(folders = folders) }
+    }
+
+    fun appFor(component: ComponentName): LauncherApp? =
+        _state.value.apps.firstOrNull { it.component == component && it.user == Process.myUserHandle() }
+            ?: _state.value.apps.firstOrNull { it.component == component }
+
+    fun folderOf(app: LauncherApp): HomeFolder? =
+        _state.value.folders.values.firstOrNull { app.component in it.apps }
+
+    /** Takes an app out of its folder without placing it; a folder left with one app dissolves. */
+    fun extractFromFolder(app: LauncherApp) {
+        val current = _state.value
+        val folder = folderOf(app) ?: return
+        val folderComp = folderComponent(folder.id)
+        val positions = current.pinPositions.toMutableMap()
+        val remaining = folder.apps - app.component
+        val folders = current.folders.toMutableMap()
+        if (remaining.size >= 2) {
+            folders[folder.id] = folder.copy(apps = remaining)
+        } else {
+            folders.remove(folder.id)
+            val folderSlot = positions.remove(folderComp)
+            val last = remaining.firstOrNull()
+            if (last != null && folderSlot != null) positions[last] = folderSlot
+        }
+        prefs.folders = folders.values.toList()
+        val (pinned, dock) = writePlacements(positions)
+        _state.update {
+            it.copy(folders = folders, pinned = pinned, dock = dock, pinPositions = positions)
+        }
+    }
+
+    /** Moves an app out of its folder to the first free slot on the current page. */
+    fun removeFromFolder(app: LauncherApp) {
+        val current = _state.value
+        val folder = folderOf(app) ?: return
+        val folderComp = folderComponent(folder.id)
+        val folderSlot = current.pinPositions[folderComp] ?: return
+        val positions = current.pinPositions.toMutableMap()
+        val remaining = folder.apps - app.component
+        val folders = current.folders.toMutableMap()
+        if (remaining.size >= 2) {
+            folders[folder.id] = folder.copy(apps = remaining)
+        } else {
+            folders.remove(folder.id)
+            positions.remove(folderComp)
+            remaining.firstOrNull()?.let { positions[it] = folderSlot }
+        }
+        if (app.component !in positions) {
+            val page = current.currentPage
+            val pageSize = current.config.columns * HOME_ROWS
+            val slot = freeSlotAtOrAfter(positions, page * pageSize, current.config.columns)
+            if (slot == null) {
+                _state.update { it.copy(message = "No free space on Home for ${app.label}.") }
+                return
+            }
+            positions[app.component] = slot
+        }
+        prefs.folders = folders.values.toList()
+        val (pinned, dock) = writePlacements(positions)
+        _state.update {
+            it.copy(
+                folders = folders,
+                pinned = pinned,
+                dock = dock,
+                pinPositions = positions,
+                menuApp = null,
+                openFolder = it.openFolder?.takeIf { id -> id in folders }
+            )
+        }
+    }
+
+    /**
+     * Standard launcher drop: an app dropped on an app makes a folder; on a folder it joins it.
+     * Returns false when the drop is not a merge (caller falls back to its move/swap).
+     */
+    private fun mergeIntoFolder(app: LauncherApp, targetSlot: Int): Boolean {
+        if (!app.isApp) return false
+        val current = _state.value
+        val occupant = current.pinPositions.entries
+            .firstOrNull { it.value == targetSlot && it.key != app.component }?.key ?: return false
+        if (occupant.isShortcut) return false
+        val positions = current.pinPositions.toMutableMap()
+        positions.remove(app.component)
+        val folders = current.folders.toMutableMap()
+        if (occupant.isFolder) {
+            val existing = folders[occupant.className] ?: return false
+            folders[existing.id] = existing.copy(apps = (existing.apps + app.component).distinct())
+        } else {
+            val other = current.apps.firstOrNull { it.component == occupant }
+            val id = java.util.UUID.randomUUID().toString().take(8)
+            val name = if (other != null && other.category == app.category &&
+                app.category != "Other"
+            ) app.category else "Folder"
+            folders[id] = HomeFolder(id, name, listOf(occupant, app.component))
+            positions.remove(occupant)
+            positions[folderComponent(id)] = targetSlot
+        }
+        prefs.folders = folders.values.toList()
+        val (pinned, dock) = writePlacements(positions)
+        _state.update {
+            it.copy(folders = folders, pinned = pinned, dock = dock, pinPositions = positions, menuApp = null)
+        }
+        return true
+    }
 
     fun launch(
         app: LauncherApp,
@@ -233,6 +447,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         fromHome: Boolean = false,
         sourceView: View? = null
     ) {
+        app.folderId?.let { openFolder(it); return }
         val context = getApplication<Application>()
         val launcherApps = context.getSystemService(LauncherApps::class.java)
         val bounds = sourceBounds?.takeIf { it.width() > 0 && it.height() > 0 }
@@ -251,10 +466,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 R.anim.launcher_launch_exit
             ).toBundle()
         }
+        val shortcutId = app.shortcutId
         var launched = runCatching {
-            launcherApps.startMainActivity(app.component, app.user, bounds, opts)
+            if (shortcutId != null) {
+                launcherApps.startShortcut(app.packageName, shortcutId, bounds, opts, app.user)
+            } else {
+                launcherApps.startMainActivity(app.component, app.user, bounds, opts)
+            }
         }.isSuccess
-        if (!launched && app.user == Process.myUserHandle()) {
+        if (shortcutId != null && !launched) {
+            _state.update { it.copy(message = "Could not open that shortcut.") }
+        }
+        if (!launched && shortcutId == null && app.user == Process.myUserHandle()) {
             launched = runCatching {
                 val intent = Intent(Intent.ACTION_MAIN)
                     .addCategory(Intent.CATEGORY_LAUNCHER)
@@ -267,7 +490,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             awaitingReturn = true
             lastLaunch = LaunchRecord(app, bounds, fromHome)
         }
-        _state.update { it.copy(drawerOpen = false, menuApp = null, search = "", homeMenuOpen = false) }
+        _state.update {
+            it.copy(drawerOpen = false, menuApp = null, search = "", homeMenuOpen = false, openFolder = null)
+        }
     }
 
     fun onActivityResumed() {
@@ -286,7 +511,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun refreshAccessibility() {
         val enabled = NotCustomAccessibilityService.isEnabled(getApplication())
-        _state.update { it.copy(accessibilityEnabled = enabled) }
+        val dots = NotificationDotService.isEnabled(getApplication())
+        _state.update { it.copy(accessibilityEnabled = enabled, notificationDotsEnabled = dots) }
     }
 
     fun openAppInfo() {
@@ -296,6 +522,19 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             Uri.parse("package:${context.packageName}")
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { context.startActivity(intent) }
+    }
+
+    fun openNotificationDotSettings() {
+        val context = getApplication<Application>()
+        runCatching { context.startActivity(NotificationDotService.settingsIntent(context)) }
+            .onFailure {
+                runCatching {
+                    context.startActivity(
+                        Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            }
     }
 
     fun openAccessibilitySettings() {
@@ -308,17 +547,41 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun openNotificationsFromHome() {
         val enabled = NotCustomAccessibilityService.isEnabled(getApplication())
-        val opened = enabled && NotCustomAccessibilityService.openNotifications()
+        val opened = (enabled && NotCustomAccessibilityService.openNotifications()) ||
+            expandStatusBar()
         _state.update {
             it.copy(
                 accessibilityEnabled = enabled,
-                message = when {
-                    !enabled -> "Enable Gesture Access for swipe-down notifications."
-                    !opened -> "Could not open notifications. Re-enable Gesture Access."
-                    else -> null
-                }
+                message = if (opened) null else "Could not open notifications. Enable Gesture Access."
             )
         }
+    }
+
+    /** Same call stock launchers use; needs only the normal EXPAND_STATUS_BAR permission. */
+    private fun expandStatusBar(): Boolean = runCatching {
+        val statusBar = getApplication<Application>().getSystemService("statusbar") ?: return false
+        statusBar.javaClass.getMethod("expandNotificationsPanel").invoke(statusBar)
+        true
+    }.getOrDefault(false)
+
+    /** Home button: close overlays; a second press while already on Home goes to page 1. */
+    fun onHomePressed(alreadyOnHome: Boolean) {
+        val current = _state.value
+        val overlayOpen = current.drawerOpen || current.menuApp != null || current.homeMenuOpen ||
+            current.settingsOpen || current.widgetPickerOpen || current.openFolder != null
+        _state.update {
+            it.copy(
+                drawerOpen = false,
+                search = "",
+                menuApp = null,
+                homeMenuOpen = false,
+                settingsOpen = false,
+                widgetPickerOpen = false,
+                widgetPickerPackage = null,
+                openFolder = null
+            )
+        }
+        if (alreadyOnHome && !overlayOpen) setCurrentPage(0)
     }
 
     fun lockScreen() {
@@ -449,17 +712,33 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             return
         }
         val pageSize = current.config.columns * HOME_ROWS
-        val start = current.currentPage * pageSize
+        val removedPage = current.currentPage
+        val start = removedPage * pageSize
         val end = start + pageSize
         val pageApps = current.pinPositions.filterValues { it in start until end }.keys
         val shifted = current.pinPositions
             .filterKeys { it !in pageApps }
             .mapValues { (_, slot) -> if (slot >= end) slot - pageSize else slot }
+        val removedWidgets = current.widgets.filter {
+            current.widgetPlacements[it]?.page == removedPage
+        }
+        removedWidgets.forEach { runCatching { widgetHost.deleteAppWidgetId(it) } }
+        val widgets = current.widgets - removedWidgets.toSet()
+        val widgetSizes = current.widgetSizes - removedWidgets.toSet()
+        val placements = current.widgetPlacements
+            .filterKeys { it !in removedWidgets }
+            .mapValues { (_, placement) ->
+                if (placement.page > removedPage) placement.copy(page = placement.page - 1)
+                else placement
+            }
         val pageCount = current.pageCount - 1
         val currentPage = current.currentPage.coerceIn(0, pageCount - 1)
         val (pinned, dock) = writePlacements(shifted)
         prefs.pageCount = pageCount
         prefs.currentPage = currentPage
+        prefs.widgets = widgets
+        prefs.widgetSizes = widgetSizes
+        prefs.widgetPlacements = placements
         _state.update {
             it.copy(
                 pinPositions = shifted,
@@ -467,7 +746,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 dock = dock,
                 pageCount = pageCount,
                 currentPage = currentPage,
-                message = if (pageApps.isEmpty()) "Page removed" else "Page removed; its apps removed from Home"
+                widgets = widgets,
+                widgetSizes = widgetSizes,
+                widgetPlacements = placements,
+                message = when {
+                    pageApps.isEmpty() && removedWidgets.isEmpty() -> "Page removed"
+                    removedWidgets.isEmpty() -> "Page removed; its apps removed from Home"
+                    pageApps.isEmpty() -> "Page removed; its widgets removed from Home"
+                    else -> "Page removed; its apps and widgets removed from Home"
+                }
             )
         }
     }
@@ -520,9 +807,33 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun unpin(app: LauncherApp) {
-        val positions = _state.value.pinPositions - app.component
+        val current = _state.value
+        val positions = current.pinPositions - app.component
+        val folders = app.folderId?.let { current.folders - it } ?: current.folders
+        if (app.folderId != null) prefs.folders = folders.values.toList()
+        val shortcuts = if (app.shortcutId != null) {
+            val remaining = current.pinnedShortcuts.filter { it.component != app.component }
+            runCatching {
+                launcherApps.pinShortcuts(
+                    app.packageName,
+                    remaining.filter { it.packageName == app.packageName }.mapNotNull { it.shortcutId },
+                    app.user
+                )
+            }
+            remaining
+        } else current.pinnedShortcuts
         val (pinned, dock) = writePlacements(positions)
-        _state.update { it.copy(pinned = pinned, dock = dock, pinPositions = positions, menuApp = null) }
+        _state.update {
+            it.copy(
+                pinned = pinned,
+                dock = dock,
+                pinPositions = positions,
+                folders = folders,
+                pinnedShortcuts = shortcuts,
+                openFolder = it.openFolder?.takeIf { id -> id in folders },
+                menuApp = null
+            )
+        }
     }
 
     fun movePinnedToSlot(app: LauncherApp, targetSlot: Int) {
@@ -540,9 +851,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val positions = current.pinPositions.toMutableMap()
         val sourceSlot = positions[app.component] ?: return
         if (sourceSlot == targetSlot) return
+        if (targetSlot >= 0 && slotHasWidget(targetSlot, current.config.columns)) {
+            _state.update { it.copy(message = "That space is taken by a widget.") }
+            return
+        }
         val occupying = positions.entries.firstOrNull {
             it.key != app.component && it.value == targetSlot
         }?.key
+        if (occupying != null && mergeIntoFolder(app, targetSlot)) return
         positions[app.component] = targetSlot
         if (occupying != null) positions[occupying] = sourceSlot
         val (pinned, dock) = writePlacements(positions)
@@ -584,10 +900,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             movePinnedToSlot(app, targetSlot)
             return
         }
+        if (slotHasWidget(targetSlot, current.config.columns)) {
+            _state.update { it.copy(message = "That space is taken by a widget.") }
+            return
+        }
         val positions = current.pinPositions.toMutableMap()
         val occupying = positions.entries.firstOrNull {
             it.key != app.component && it.value == targetSlot
         }?.key
+        if (occupying != null && mergeIntoFolder(app, targetSlot)) return
         if (occupying != null) {
             val freeForOccupant = freeSlotAtOrAfter(
                 positions.filterValues { it != targetSlot },
@@ -721,10 +1042,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         var page = startSlot / pageSize
         if (page >= MAX_HOME_PAGES) return null
         val used = positions.values.toSet()
-        if (startSlot !in used) return startSlot
+        if (startSlot !in used && !slotHasWidget(startSlot, columns)) return startSlot
         val pageEnd = page * pageSize + columns * HOME_GRID_ROWS
         for (slot in startSlot + 1 until pageEnd) {
-            if (slot !in used) return slot
+            if (slot !in used && !slotHasWidget(slot, columns)) return slot
         }
         page++
         while (page < MAX_HOME_PAGES) {
@@ -753,8 +1074,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             movePinnedToSlot(app, targetSlot)
             return
         }
+        if (slotHasWidget(targetSlot, current.config.columns)) {
+            _state.update { it.copy(message = "That space is taken by a widget.") }
+            return
+        }
         val positions = current.pinPositions.toMutableMap()
         val occupying = positions.entries.firstOrNull { it.value == targetSlot }?.key
+        if (occupying != null && mergeIntoFolder(app, targetSlot)) return
         if (occupying != null) {
             val freeDock = (0 until MAX_DOCK_ITEMS)
                 .map { -(it + 1) }
@@ -830,11 +1156,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             Uri.parse("package:${app.packageName}")
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             .putExtra(Intent.EXTRA_USER, app.user)
-        runCatching { getApplication<Application>().startActivity(intent) }
+        val opened = runCatching {
+            getApplication<Application>().startActivity(intent)
+        }.isSuccess
+        if (!opened) {
+            _state.update { it.copy(message = "Could not open the uninstaller.") }
+        }
         dismissMenu()
     }
 
     fun canUninstall(app: LauncherApp): Boolean {
+        if (!app.isApp) return false
         if (app.user != Process.myUserHandle()) return false
         val context = getApplication<Application>()
         val info = runCatching {
@@ -1028,23 +1360,53 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }.getOrNull()
 
     fun setColumns(value: Int) {
+        val old = prefs.columns
         prefs.columns = value
-        val current = _state.value
-        val config = prefs.config()
-        val pageCount = maxOf(
-            current.pageCount,
-            neededPages(current.pinPositions, config.columns)
-        ).coerceAtMost(MAX_HOME_PAGES)
-        val currentPage = current.currentPage.coerceIn(0, pageCount - 1)
-        prefs.pageCount = pageCount
-        prefs.currentPage = currentPage
-        _state.update {
-            it.copy(
-                config = config,
-                pageCount = pageCount,
-                currentPage = currentPage
-            )
+        val columns = prefs.columns
+        if (old == columns) return
+        // Slots encode page/row/column with the column count, so re-encode them or icons jump.
+        prefs.pinPositions = remapSlots(prefs.pinPositions, old, columns)
+        reload()
+    }
+
+    private fun remapSlots(
+        positions: Map<ComponentName, Int>,
+        oldColumns: Int,
+        newColumns: Int
+    ): Map<ComponentName, Int> {
+        val oldPage = oldColumns * HOME_ROWS
+        val newPage = newColumns * HOME_ROWS
+        val result = LinkedHashMap<ComponentName, Int>()
+        val used = mutableSetOf<Int>()
+        positions.filterValues { it < 0 }.forEach { (component, slot) ->
+            result[component] = slot
+            used += slot
         }
+        val overflow = mutableListOf<Pair<ComponentName, Int>>()
+        positions.entries.filter { it.value >= 0 }.sortedBy { it.value }.forEach { (component, slot) ->
+            val page = slot / oldPage
+            val inPage = slot % oldPage
+            val row = inPage / oldColumns
+            val column = inPage % oldColumns
+            val target = page * newPage + row * newColumns + column
+            if (column < newColumns && row < HOME_GRID_ROWS && used.add(target)) {
+                result[component] = target
+            } else {
+                overflow += component to page
+            }
+        }
+        overflow.forEach { (component, startPage) ->
+            val slot = (startPage until MAX_HOME_PAGES).asSequence()
+                .flatMap { page ->
+                    (page * newPage until page * newPage + newColumns * HOME_GRID_ROWS).asSequence()
+                }
+                .firstOrNull { it !in used }
+            if (slot != null) {
+                result[component] = slot
+                used += slot
+            }
+        }
+        return result
     }
 
     fun setIconSize(value: Int) {
@@ -1097,7 +1459,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun startWidgets() {
-        runCatching { widgetHost.startListening() }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { widgetHost.startListening() }
+        }
     }
 
     fun stopWidgets() {
@@ -1134,8 +1498,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     }.getOrDefault(info.provider.packageName)
                     val label = info.loadLabel(pm)?.toString()?.takeIf { it.isNotBlank() }
                         ?: appLabel
-                    val cols = (info.minWidth / 70f).roundToInt().coerceAtLeast(1)
-                    val rows = (info.minHeight / 70f).roundToInt().coerceAtLeast(1)
+                    // minWidth/minHeight are px; Android sizes n cells as 70n - 30 dp.
+                    val density = context.resources.displayMetrics.density
+                    val cols = kotlin.math.ceil((info.minWidth / density + 30f) / 70f).toInt()
+                        .coerceIn(1, _state.value.config.columns)
+                    val rows = kotlin.math.ceil((info.minHeight / density + 30f) / 70f).toInt()
+                        .coerceIn(1, HOME_GRID_ROWS)
                     WidgetChoice(info, appLabel, label, "$cols×$rows")
                 }
                 .sortedWith(compareBy({ it.appLabel.lowercase() }, { it.label.lowercase() }))
@@ -1197,7 +1565,29 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun handlePinRequest(intent: Intent?) {
         if (intent == null) return
+        // A pin request can arrive in a fresh activity before the layout loads; mutating the
+        // empty initial state would then overwrite the saved Home layout. Defer until loaded.
+        if (_state.value.loading) {
+            pendingPinRequest = intent
+            return
+        }
         val request = runCatching { launcherApps.getPinItemRequest(intent) }.getOrNull() ?: return
+        if (request.requestType == LauncherApps.PinItemRequest.REQUEST_TYPE_SHORTCUT) {
+            val info = request.shortcutInfo
+            val accepted = info != null && runCatching { request.accept() }.getOrDefault(false)
+            if (!accepted || info == null) {
+                _state.update { it.copy(message = "Could not add that shortcut.") }
+                return
+            }
+            val item = shortcutItem(info)
+            _state.update { state ->
+                state.copy(
+                    pinnedShortcuts = state.pinnedShortcuts.filter { it.component != item.component } + item
+                )
+            }
+            pin(item)
+            return
+        }
         if (request.requestType != LauncherApps.PinItemRequest.REQUEST_TYPE_APPWIDGET) return
         val info = runCatching { request.getAppWidgetProviderInfo(getApplication()) }.getOrNull()
             ?: return
@@ -1304,54 +1694,132 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun commitWidget(id: Int) {
-        val updated = (_state.value.widgets + id).distinct()
-        val size = _state.value.widgetSizes[id]
-            ?: defaultWidgetSize(id, _state.value.config.columns)
-        val sizes = _state.value.widgetSizes + (id to size)
+        val current = _state.value
+        val updated = (current.widgets + id).distinct()
+        val size = current.widgetSizes[id]
+            ?: defaultWidgetSize()
+        val sizes = current.widgetSizes + (id to size)
+        val page = current.currentPage.coerceIn(0, (current.pageCount - 1).coerceAtLeast(0))
+        val placement = findWidgetPlacement(
+            id = id,
+            size = size,
+            columns = current.config.columns,
+            page = page,
+            placements = current.widgetPlacements,
+            sizes = sizes,
+            positions = current.pinPositions
+        )
+        if (placement == null) {
+            runCatching { widgetHost.deleteAppWidgetId(id) }
+            _state.update {
+                it.copy(
+                    widgetPickerOpen = false,
+                    widgetPickerPackage = null,
+                    message = "No room on page ${page + 1} for that widget."
+                )
+            }
+            return
+        }
+        val placements = current.widgetPlacements + (id to placement)
         prefs.widgets = updated
         prefs.widgetSizes = sizes
-        if (_state.value.currentPage != 0) {
-            prefs.currentPage = 0
-        }
+        prefs.widgetPlacements = placements
+        prefs.currentPage = page
         _state.update {
             it.copy(
                 widgets = updated,
                 widgetSizes = sizes,
-                currentPage = 0,
+                widgetPlacements = placements,
+                currentPage = page,
                 widgetPickerOpen = false,
                 widgetPickerPackage = null,
-                message = "Widget added"
+                message = "Widget added to page ${page + 1}"
             )
         }
     }
 
     fun resizeWidget(id: Int, columns: Int, rows: Int) {
-        if (id !in _state.value.widgets) return
-        val maxColumns = _state.value.config.columns
+        val current = _state.value
+        if (id !in current.widgets) return
+        val maxColumns = current.config.columns
         val size = WidgetSize(
             columns.coerceIn(1, maxColumns),
             rows.coerceIn(1, HOME_GRID_ROWS)
         )
-        if (_state.value.widgetSizes[id] == size) return
-        val sizes = _state.value.widgetSizes + (id to size)
+        if (current.widgetSizes[id] == size) return
+        val existing = current.widgetPlacements[id] ?: WidgetPlacement(0, 0)
+        val placed = clampWidgetPlacement(existing, size, maxColumns)
+        if (!widgetPlacementFree(id, placed, size, current)) {
+            _state.update { it.copy(message = "That widget size does not fit there.") }
+            return
+        }
+        val sizes = current.widgetSizes + (id to size)
+        val placements = current.widgetPlacements + (id to placed)
         prefs.widgetSizes = sizes
-        _state.update { it.copy(widgetSizes = sizes) }
+        prefs.widgetPlacements = placements
+        _state.update { it.copy(widgetSizes = sizes, widgetPlacements = placements) }
+    }
+
+    fun widgetPlacementFree(id: Int, page: Int, column: Int, row: Int): Boolean {
+        val current = _state.value
+        if (id !in current.widgets) return false
+        val size = current.widgetSizes[id] ?: WidgetSize(1, 1)
+        val placement = clampWidgetPlacement(
+            WidgetPlacement(column, row, page),
+            size,
+            current.config.columns
+        )
+        return widgetPlacementFree(id, placement, size, current)
+    }
+
+    fun moveWidget(id: Int, column: Int, row: Int, page: Int): Boolean {
+        val current = _state.value
+        if (id !in current.widgets) return false
+        val size = current.widgetSizes[id] ?: WidgetSize(1, 1)
+        val placement = clampWidgetPlacement(
+            WidgetPlacement(column, row, page),
+            size,
+            current.config.columns
+        )
+        if (current.widgetPlacements[id] == placement) return true
+        if (!widgetPlacementFree(id, placement, size, current)) return false
+        val pageCount = maxOf(current.pageCount, placement.page + 1)
+            .coerceAtMost(MAX_HOME_PAGES)
+        val placements = current.widgetPlacements + (id to placement)
+        prefs.widgetPlacements = placements
+        prefs.pageCount = pageCount
+        prefs.currentPage = placement.page
+        _state.update {
+            it.copy(
+                widgetPlacements = placements,
+                pageCount = pageCount,
+                currentPage = placement.page
+            )
+        }
+        return true
     }
 
     fun removeWidget(id: Int) {
         runCatching { widgetHost.deleteAppWidgetId(id) }
         val updated = _state.value.widgets - id
         val sizes = _state.value.widgetSizes - id
+        val placements = _state.value.widgetPlacements - id
         prefs.widgets = updated
         prefs.widgetSizes = sizes
-        _state.update { it.copy(widgets = updated, widgetSizes = sizes) }
+        prefs.widgetPlacements = placements
+        _state.update {
+            it.copy(widgets = updated, widgetSizes = sizes, widgetPlacements = placements)
+        }
     }
 
     fun clearWidgets() {
         _state.value.widgets.forEach { runCatching { widgetHost.deleteAppWidgetId(it) } }
         prefs.widgets = emptyList()
         prefs.widgetSizes = emptyMap()
-        _state.update { it.copy(widgets = emptyList(), widgetSizes = emptyMap()) }
+        prefs.widgetPlacements = emptyMap()
+        _state.update {
+            it.copy(widgets = emptyList(), widgetSizes = emptyMap(), widgetPlacements = emptyMap())
+        }
     }
 
     fun widgetLabel(id: Int): String = runCatching {
@@ -1377,6 +1845,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 dock = pinPositions.entries.filter { it.value < 0 }
                     .sortedByDescending { it.value }.map { it.key },
                 hidden = prefs.hidden,
+                folders = emptyMap(),
+                openFolder = null,
                 config = prefs.config()
             )
         }
@@ -1396,8 +1866,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val saved = prefs.widgetSizes.filterKeys { it in widgets }.toMutableMap()
         var changed = saved.size != prefs.widgetSizes.size
         widgets.forEach { id ->
-            if (id !in saved) {
-                saved[id] = defaultWidgetSize(id, columns)
+            val size = saved[id]
+            if (size == null) {
+                saved[id] = defaultWidgetSize()
+                changed = true
+            } else if (size.columns > columns) {
+                saved[id] = size.copy(columns = columns)
                 changed = true
             }
         }
@@ -1405,14 +1879,170 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         return saved
     }
 
-    private fun defaultWidgetSize(id: Int, columns: Int): WidgetSize {
-        val info = runCatching { widgetManager.getAppWidgetInfo(id) }.getOrNull()
-        val minWidth = (info?.minWidth ?: 70).coerceAtLeast(70)
-        val minHeight = (info?.minHeight ?: 70).coerceAtLeast(70)
-        return WidgetSize(
-            (minWidth / 70f).roundToInt().coerceIn(1, columns),
-            (minHeight / 70f).roundToInt().coerceIn(1, HOME_GRID_ROWS)
-        )
+    private fun defaultWidgetSize(): WidgetSize = WidgetSize(1, 1)
+
+    private fun syncWidgetPlacements(
+        widgets: List<Int>,
+        sizes: Map<Int, WidgetSize>,
+        columns: Int,
+        positions: Map<ComponentName, Int>
+    ): Map<Int, WidgetPlacement> {
+        val saved = prefs.widgetPlacements
+        val placements = LinkedHashMap<Int, WidgetPlacement>()
+        var changed = saved.keys.any { it !in widgets }
+        widgets.forEach { id ->
+            val size = sizes[id] ?: WidgetSize(1, 1)
+            val existing = saved[id]?.let { clampWidgetPlacement(it, size, columns) }
+            var placement = existing?.takeIf {
+                widgetPlacementFreeAt(id, it, size, columns, placements, sizes, positions)
+            }
+            if (placement == null) {
+                changed = true
+                val preferred = existing?.page ?: 0
+                val pages = listOf(preferred) + (0 until MAX_HOME_PAGES).filter { it != preferred }
+                placement = pages.firstNotNullOfOrNull { page ->
+                    findWidgetPlacement(
+                        id = id,
+                        size = size,
+                        columns = columns,
+                        page = page,
+                        placements = placements,
+                        sizes = sizes,
+                        positions = positions
+                    )
+                }
+            }
+            if (placement == null) placement = WidgetPlacement(0, 0, 0)
+            if (placement != saved[id]) changed = true
+            placements[id] = placement
+        }
+        if (changed) prefs.widgetPlacements = placements
+        return placements
+    }
+
+    private fun findWidgetPlacement(
+        id: Int,
+        size: WidgetSize,
+        columns: Int,
+        page: Int,
+        placements: Map<Int, WidgetPlacement> = _state.value.widgetPlacements,
+        sizes: Map<Int, WidgetSize> = _state.value.widgetSizes,
+        positions: Map<ComponentName, Int> = _state.value.pinPositions
+    ): WidgetPlacement? {
+        val occupied = widgetOccupiedCells(placements, sizes, page, id) +
+            appOccupiedCells(positions, columns, page)
+        val maxColumn = (columns - size.columns).coerceAtLeast(0)
+        val maxRow = (HOME_GRID_ROWS - size.rows).coerceAtLeast(0)
+        for (row in 0..maxRow) {
+            for (column in 0..maxColumn) {
+                val cells = widgetCells(WidgetPlacement(column, row, page), size)
+                if (cells.none { it in occupied }) return WidgetPlacement(column, row, page)
+            }
+        }
+        return null
+    }
+
+    private fun widgetPlacementFree(
+        id: Int,
+        placement: WidgetPlacement,
+        size: WidgetSize,
+        state: LauncherState
+    ): Boolean {
+        val cells = widgetCells(placement, size)
+        if (cells.any {
+                it.first !in 0 until state.config.columns ||
+                    it.second !in 0 until HOME_GRID_ROWS
+            }
+        ) return false
+        val occupied = widgetOccupiedCells(
+            state.widgetPlacements, state.widgetSizes, placement.page, id
+        ) + appOccupiedCells(state.pinPositions, state.config.columns, placement.page)
+        return cells.none { it in occupied }
+    }
+
+    private fun widgetPlacementFreeAt(
+        id: Int,
+        placement: WidgetPlacement,
+        size: WidgetSize,
+        columns: Int,
+        placements: Map<Int, WidgetPlacement>,
+        sizes: Map<Int, WidgetSize>,
+        positions: Map<ComponentName, Int>
+    ): Boolean {
+        val cells = widgetCells(placement, size)
+        if (cells.any {
+                it.first !in 0 until columns || it.second !in 0 until HOME_GRID_ROWS
+            }
+        ) return false
+        val occupied = widgetOccupiedCells(placements, sizes, placement.page, id) +
+            appOccupiedCells(positions, columns, placement.page)
+        return cells.none { it in occupied }
+    }
+
+    private fun widgetOccupiedCells(
+        placements: Map<Int, WidgetPlacement>,
+        sizes: Map<Int, WidgetSize>,
+        page: Int,
+        excludeId: Int
+    ): Set<Pair<Int, Int>> = buildSet {
+        placements.forEach { (id, placement) ->
+            if (id == excludeId || placement.page != page) return@forEach
+            val size = sizes[id] ?: WidgetSize(1, 1)
+            addAll(widgetCells(placement, size))
+        }
+    }
+
+    private fun appOccupiedCells(
+        positions: Map<ComponentName, Int>,
+        columns: Int,
+        page: Int
+    ): Set<Pair<Int, Int>> {
+        val pageSize = columns * HOME_ROWS
+        return buildSet {
+            positions.values.forEach { slot ->
+                if (slot < 0 || slot / pageSize != page) return@forEach
+                val inPage = slot % pageSize
+                val row = inPage / columns
+                if (row < HOME_GRID_ROWS) add((inPage % columns) to row)
+            }
+        }
+    }
+
+    private fun slotHasWidget(slot: Int, columns: Int): Boolean {
+        if (slot < 0) return false
+        val pageSize = columns * HOME_ROWS
+        val page = slot / pageSize
+        val inPage = slot % pageSize
+        val row = inPage / columns
+        if (row >= HOME_GRID_ROWS) return false
+        val cell = (inPage % columns) to row
+        val state = _state.value
+        return state.widgets.any { id ->
+            val placement = state.widgetPlacements[id] ?: return@any false
+            val size = state.widgetSizes[id] ?: WidgetSize(1, 1)
+            placement.page == page && cell in widgetCells(placement, size)
+        }
+    }
+
+    private fun clampWidgetPlacement(
+        placement: WidgetPlacement,
+        size: WidgetSize,
+        columns: Int
+    ): WidgetPlacement = WidgetPlacement(
+        placement.column.coerceIn(0, (columns - size.columns).coerceAtLeast(0)),
+        placement.row.coerceIn(0, (HOME_GRID_ROWS - size.rows).coerceAtLeast(0)),
+        placement.page.coerceIn(0, MAX_HOME_PAGES - 1)
+    )
+
+    private fun widgetCells(
+        placement: WidgetPlacement,
+        size: WidgetSize
+    ): List<Pair<Int, Int>> = buildList {
+        for (row in placement.row until placement.row + size.rows) {
+            for (column in placement.column until placement.column + size.columns) {
+                add(column to row)
+            }
+        }
     }
 
     private fun firstFreeSlot(
@@ -1423,7 +2053,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val pageSize = columns * HOME_ROWS
         val start = page * pageSize
         val used = positions.values.toSet()
-        return (start until start + columns * HOME_GRID_ROWS).firstOrNull { it !in used }
+        return (start until start + columns * HOME_GRID_ROWS)
+            .firstOrNull { it !in used && !slotHasWidget(it, columns) }
     }
 
     private fun writePlacements(

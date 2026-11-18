@@ -1,14 +1,18 @@
 package dev.notcustom.app.launcher.ui
 
 import android.app.WallpaperManager
+import android.content.Context
 import android.graphics.Rect
 import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetHostView
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
 import android.os.Bundle
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -25,7 +29,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -35,6 +38,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -52,6 +56,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -103,8 +108,11 @@ import dev.notcustom.app.launcher.MAX_HOME_PAGES
 import dev.notcustom.app.launcher.LauncherApp
 import dev.notcustom.app.launcher.LauncherConfig
 import dev.notcustom.app.launcher.LauncherViewModel
+import dev.notcustom.app.launcher.WidgetPlacement
 import dev.notcustom.app.launcher.WidgetSize
 import dev.notcustom.app.launcher.ReturnTransition
+import dev.notcustom.app.launcher.isShortcut
+import dev.notcustom.app.launcher.toItem
 import dev.notcustom.app.ui.theme.Muted
 import dev.notcustom.app.ui.theme.NothingRed
 import androidx.core.graphics.drawable.toBitmap
@@ -118,10 +126,11 @@ import kotlin.math.roundToInt
 @Composable
 fun LauncherRoot(viewModel: LauncherViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val appsByComponent = remember(state.apps) {
+    val appsByComponent = remember(state.apps, state.pinnedShortcuts, state.folders) {
         state.apps.groupBy { it.component }.mapValues { (_, list) ->
             list.firstOrNull { it.user == android.os.Process.myUserHandle() } ?: list.first()
-        }
+        } + state.pinnedShortcuts.associateBy { it.component } +
+            state.folders.values.map { it.toItem() }.associateBy { it.component }
     }
     val pinned = remember(state.pinned, state.pinPositions, appsByComponent) {
         state.pinned.mapNotNull { appsByComponent[it] }
@@ -137,6 +146,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
     val returningKey = state.returning?.app?.key
     val context = LocalContext.current
     val dropBounds = remember { mutableMapOf<HomeDropAction, Rect>() }
+    val drawerDropBounds = remember { mutableMapOf<HomeDropAction, Rect>() }
     var pagerOffset by remember { mutableFloatStateOf(0f) }
     val wallpaper by produceState<ImageBitmap?>(initialValue = null) {
         value = withContext(Dispatchers.IO) { loadWallpaper(context) }
@@ -166,6 +176,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
     }
 
     BackHandler(enabled = state.drawerOpen) { viewModel.closeDrawer() }
+    BackHandler(enabled = state.openFolder != null) { viewModel.closeFolder() }
 
     var rootSize by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
@@ -229,6 +240,25 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
         }
     }
 
+    LaunchedEffect(widgetDrag, widgetDrag?.edgeDirection, state.currentPage, state.pageCount) {
+        val drag = widgetDrag ?: return@LaunchedEffect
+        if (drag.hoverRemove || drag.edgeDirection == 0 || drag.edgeConsumed) {
+            return@LaunchedEffect
+        }
+        delay(420)
+        if (widgetDrag !== drag || drag.hoverRemove || drag.edgeDirection == 0 ||
+            drag.edgeConsumed
+        ) {
+            return@LaunchedEffect
+        }
+        val target = state.currentPage + drag.edgeDirection
+        drag.edgeConsumed = true
+        when {
+            target in 0 until state.pageCount -> viewModel.setCurrentPage(target)
+            target >= state.pageCount && state.pageCount < MAX_HOME_PAGES -> viewModel.addPage()
+        }
+    }
+
     val updateHomeDrag: (Offset) -> Unit = { delta ->
         homeDrag?.let { drag ->
             drag.offset += delta
@@ -271,7 +301,124 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
         }
     }
 
+    val updateWidgetTarget: (WidgetDrag) -> Unit = { drag ->
+        val current = viewModel.state.value
+        val size = current.widgetSizes[drag.id] ?: WidgetSize(1, 1)
+        val page = current.currentPage
+        val columns = current.config.columns
+        val pageSize = columns * HOME_ROWS
+        val x = drag.origin.exactCenterX() + drag.offset.x
+        val y = drag.origin.exactCenterY() + drag.offset.y
+        val slots = homeSlotBounds.entries.filter { it.key / pageSize == page }
+        val anchor = slots.firstOrNull {
+            it.value.contains(x.roundToInt(), y.roundToInt())
+        } ?: slots.minByOrNull {
+            hypot(
+                (it.value.exactCenterX() - x).toDouble(),
+                (it.value.exactCenterY() - y).toDouble()
+            )
+        }
+        if (drag.hoverRemove || anchor == null) {
+            drag.targetPage = -1
+        } else {
+            val inPage = anchor.key % pageSize
+            val anchorColumn = inPage % columns
+            val anchorRow = inPage / columns
+            val column = (anchorColumn - (size.columns - 1) / 2)
+                .coerceIn(0, (columns - size.columns).coerceAtLeast(0))
+            val row = (anchorRow - (size.rows - 1) / 2)
+                .coerceIn(0, (HOME_GRID_ROWS - size.rows).coerceAtLeast(0))
+            drag.targetPage = page
+            drag.targetColumn = column
+            drag.targetRow = row
+            drag.targetValid = viewModel.widgetPlacementFree(drag.id, page, column, row)
+        }
+    }
 
+    LaunchedEffect(widgetDrag, state.currentPage) {
+        val drag = widgetDrag ?: return@LaunchedEffect
+        delay(80)
+        updateWidgetTarget(drag)
+    }
+
+    val onDrawerAppDrag: (Offset) -> Unit = { delta ->
+                    drawerDrag?.let { drag ->
+                        drag.offset += delta
+                        if (!drag.active && drag.offset.getDistance() > swipeThreshold * 0.25f) {
+                            drag.active = true
+                        }
+                        if (drag.active) {
+                            val x = drag.origin.exactCenterX() + drag.offset.x
+                            val y = drag.origin.exactCenterY() + drag.offset.y
+                            val action = drawerDropBounds.entries.firstOrNull {
+                                it.value.contains(x.roundToInt(), y.roundToInt())
+                            }?.key
+                            if (action != drag.actionTarget) drag.actionTarget = action
+                            if (action != null) {
+                                drag.hoverDockSlot = -1
+                                drag.hoverSlot = -1
+                            } else {
+                                val pageSize = state.config.columns * HOME_ROWS
+                                drag.hoverDockSlot = dockSlotBounds.entries.firstOrNull {
+                                    it.value.contains(x.roundToInt(), y.roundToInt())
+                                }?.key ?: -1
+                                drag.hoverSlot = homeSlotBounds.entries.firstOrNull {
+                                    it.key / pageSize == state.currentPage &&
+                                        it.value.contains(x.roundToInt(), y.roundToInt())
+                                }?.key ?: -1
+                            }
+                        }
+                    }
+                }
+    val onDrawerAppDragEnd: () -> Unit = {
+                    val drag = drawerDrag
+                    if (drag != null && drag.active) {
+                        val x = drag.origin.exactCenterX() + drag.offset.x
+                        val y = drag.origin.exactCenterY() + drag.offset.y
+                        val action = drag.actionTarget
+                        val direction = when {
+                            x < edgeThreshold && state.currentPage > 0 -> -1
+                            x > rootSize.width - edgeThreshold -> 1
+                            else -> 0
+                        }
+                        val dockTarget = dockSlotBounds.entries.firstOrNull {
+                            it.value.contains(x.roundToInt(), y.roundToInt())
+                        }?.key
+                        // A folder app leaves its folder only once it lands somewhere new.
+                        if (drag.fromFolder && action == null) viewModel.extractFromFolder(drag.app)
+                        if (action != null) {
+                            when (action) {
+                                HomeDropAction.Uninstall -> {
+                                    viewModel.uninstall(drag.app)
+                                    viewModel.closeDrawer()
+                                }
+                                HomeDropAction.Remove -> viewModel.extractFromFolder(drag.app)
+                                HomeDropAction.Cancel -> Unit
+                                else -> Unit
+                            }
+                        } else if (dockTarget != null) {
+                            viewModel.addToDock(drag.app, dockTarget)
+                        } else if (direction != 0) {
+                            viewModel.addToAdjacentPage(drag.app, direction)
+                        } else {
+                            val pageSize = state.config.columns * HOME_ROWS
+                            val target = homeSlotBounds.entries.firstOrNull {
+                                it.key / pageSize == state.currentPage &&
+                                    it.value.contains(x.roundToInt(), y.roundToInt())
+                            }?.key
+                            if (target != null) {
+                                viewModel.addToSlot(drag.app, target)
+                            } else {
+                                viewModel.addToPage(drag.app, state.currentPage)
+                            }
+                        }
+                        viewModel.closeDrawer()
+                    } else if (drag != null) {
+                        viewModel.showMenu(drag.app)
+                    }
+                    if (drag?.fromFolder == true && drag.active) viewModel.closeFolder()
+                    drawerDrag = null
+                }
 
     Box(
         Modifier
@@ -283,11 +430,13 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 state.settingsOpen,
                 state.widgetPickerOpen,
                 state.menuApp,
+                state.openFolder,
                 widgetDrag,
                 swipeThreshold
             ) {
                 if (state.drawerOpen || state.homeMenuOpen || state.settingsOpen ||
-                    state.widgetPickerOpen || state.menuApp != null || widgetDrag != null
+                    state.widgetPickerOpen || state.menuApp != null || widgetDrag != null ||
+                    state.openFolder != null
                 ) {
                     return@pointerInput
                 }
@@ -303,6 +452,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         if (change.changedToUp()) break
+                        if (widgetPressGate.down) break
                         val delta = change.positionChange()
                         vertical += delta.y
                         horizontal += abs(delta.x)
@@ -327,10 +477,12 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 state.settingsOpen,
                 state.widgetPickerOpen,
                 state.menuApp,
+                state.openFolder,
                 widgetDrag
             ) {
                 if (state.drawerOpen || state.homeMenuOpen || state.settingsOpen ||
-                    state.widgetPickerOpen || state.menuApp != null || widgetDrag != null
+                    state.widgetPickerOpen || state.menuApp != null || widgetDrag != null ||
+                    state.openFolder != null
                 ) {
                     return@pointerInput
                 }
@@ -405,13 +557,13 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 apps = pinned,
                 widgets = state.widgets,
                 widgetSizes = state.widgetSizes,
+                widgetPlacements = state.widgetPlacements,
                 selectedWidgetId = selectedWidgetId,
                 widgetPressGate = widgetPressGate,
                 onWidgetSelect = { selectedWidgetId = it },
                 onWidgetResize = viewModel::resizeWidget,
                 onWidgetDragStart = { id, origin ->
-                    selectedWidgetId = null
-                    widgetDrag = WidgetDrag(id, origin)
+                    widgetDrag = WidgetDrag(id, origin, state.currentPage)
                 },
                 onWidgetDrag = { delta ->
                     widgetDrag?.let { drag ->
@@ -420,13 +572,57 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                         val y = drag.origin.exactCenterY() + drag.offset.y
                         drag.hoverRemove = dropBounds[HomeDropAction.Remove]
                             ?.contains(x.roundToInt(), y.roundToInt()) == true
+                        val direction = if (drag.hoverRemove) 0 else when {
+                            x < edgeThreshold && state.currentPage > 0 -> -1
+                            x > rootSize.width - edgeThreshold &&
+                                state.pageCount < MAX_HOME_PAGES -> 1
+                            else -> 0
+                        }
+                        if (direction != drag.edgeDirection) {
+                            drag.edgeDirection = direction
+                            drag.edgeConsumed = false
+                        }
+                        updateWidgetTarget(drag)
                     }
                 },
                 onWidgetDragEnd = {
                     widgetDrag?.let { drag ->
-                        if (drag.hoverRemove) viewModel.removeWidget(drag.id)
+                        if (drag.hoverRemove) {
+                            viewModel.removeWidget(drag.id)
+                        } else {
+                            val current = viewModel.state.value
+                            val size = current.widgetSizes[drag.id] ?: WidgetSize(1, 1)
+                            val fallback = current.widgetPlacements[drag.id]
+                                ?: WidgetPlacement(0, 0, current.currentPage)
+                            var page = drag.targetPage
+                            if (page < 0 && drag.edgeDirection != 0 && !drag.edgeConsumed) {
+                                page = (current.currentPage + drag.edgeDirection)
+                                    .coerceIn(0, MAX_HOME_PAGES - 1)
+                            }
+                            if (page < 0) page = current.currentPage
+                            val column = if (drag.targetPage == page) {
+                                drag.targetColumn
+                            } else {
+                                fallback.column.coerceIn(
+                                    0,
+                                    (current.config.columns - size.columns).coerceAtLeast(0)
+                                )
+                            }
+                            val row = if (drag.targetPage == page) {
+                                drag.targetRow
+                            } else {
+                                fallback.row.coerceIn(
+                                    0,
+                                    (HOME_GRID_ROWS - size.rows).coerceAtLeast(0)
+                                )
+                            }
+                            if (!viewModel.moveWidget(drag.id, column, row, page)) {
+                                viewModel.showMessage("Not enough space there.")
+                            }
+                        }
                     }
                     widgetDrag = null
+                    selectedWidgetId = null
                 },
                 onWidgetDragCancel = { widgetDrag = null },
                 config = state.config,
@@ -436,6 +632,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 iconPackKey = iconKey,
                 pageCount = state.pageCount,
                 currentPage = state.currentPage,
+                widgetDrag = widgetDrag,
                 slotBounds = homeSlotBounds,
                 drawerHoverSlot = drawerDrag?.takeIf { it.active }?.hoverSlot?.takeIf { it >= 0 },
                 showSlotDots = drawerDrag?.active == true,
@@ -455,6 +652,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                                 HomeDropAction.Remove -> viewModel.unpin(drag.app)
                                 HomeDropAction.Uninstall -> viewModel.uninstall(drag.app)
                                 HomeDropAction.AppInfo -> viewModel.appInfo(drag.app)
+                                HomeDropAction.Cancel -> Unit
                             }
                         } else if (moved) {
                             when {
@@ -539,6 +737,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                                 HomeDropAction.Remove -> viewModel.unpin(drag.app)
                                 HomeDropAction.Uninstall -> viewModel.uninstall(drag.app)
                                 HomeDropAction.AppInfo -> viewModel.appInfo(drag.app)
+                                HomeDropAction.Cancel -> Unit
                             }
                         } else if (drag.offset.getDistance() <= 24f) {
                             viewModel.showMenu(drag.app)
@@ -598,66 +797,20 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 onAppDragStart = { app, origin ->
                     drawerDrag = DrawerDrag(app, origin)
                 },
-                onAppDrag = { delta ->
-                    drawerDrag?.let { drag ->
-                        drag.offset += delta
-                        if (!drag.active && drag.offset.getDistance() > swipeThreshold * 0.25f) {
-                            drag.active = true
-                        }
-                        if (drag.active) {
-                            val x = drag.origin.exactCenterX() + drag.offset.x
-                            val y = drag.origin.exactCenterY() + drag.offset.y
-                            val pageSize = state.config.columns * HOME_ROWS
-                            drag.hoverDockSlot = dockSlotBounds.entries.firstOrNull {
-                                it.value.contains(x.roundToInt(), y.roundToInt())
-                            }?.key ?: -1
-                            drag.hoverSlot = homeSlotBounds.entries.firstOrNull {
-                                it.key / pageSize == state.currentPage &&
-                                    it.value.contains(x.roundToInt(), y.roundToInt())
-                            }?.key ?: -1
-                        }
-                    }
-                },
-                onAppDragEnd = {
-                    val drag = drawerDrag
-                    if (drag != null && drag.active) {
-                        val x = drag.origin.exactCenterX() + drag.offset.x
-                        val y = drag.origin.exactCenterY() + drag.offset.y
-                        val direction = when {
-                            x < edgeThreshold && state.currentPage > 0 -> -1
-                            x > rootSize.width - edgeThreshold -> 1
-                            else -> 0
-                        }
-                        val dockTarget = dockSlotBounds.entries.firstOrNull {
-                            it.value.contains(x.roundToInt(), y.roundToInt())
-                        }?.key
-                        if (dockTarget != null) {
-                            viewModel.addToDock(drag.app, dockTarget)
-                        } else if (direction != 0) {
-                            viewModel.addToAdjacentPage(drag.app, direction)
-                        } else {
-                            val pageSize = state.config.columns * HOME_ROWS
-                            val target = homeSlotBounds.entries.firstOrNull {
-                                it.key / pageSize == state.currentPage &&
-                                    it.value.contains(x.roundToInt(), y.roundToInt())
-                            }?.key
-                            if (target != null) {
-                                viewModel.addToSlot(drag.app, target)
-                            } else {
-                                viewModel.addToPage(drag.app, state.currentPage)
-                            }
-                        }
-                        viewModel.closeDrawer()
-                    } else if (drag != null) {
-                        viewModel.showMenu(drag.app)
-                    }
-                    drawerDrag = null
-                },
+                onAppDrag = onDrawerAppDrag,
+                onAppDragEnd = onDrawerAppDragEnd,
                 onAppDragCancel = { drawerDrag = null }
             )
         }
 
         drawerDrag?.takeIf { it.active }?.let { drag ->
+            HomeDropBar(
+                actions = listOf(HomeDropAction.Cancel) +
+                    (if (drag.fromFolder) listOf(HomeDropAction.Remove) else emptyList()) +
+                    if (viewModel.canUninstall(drag.app)) listOf(HomeDropAction.Uninstall) else emptyList(),
+                hovered = drag.actionTarget,
+                onBounds = { action, rect -> drawerDropBounds[action] = rect }
+            )
             val x = drag.origin.exactCenterX() + drag.offset.x
             val direction = when {
                 x < edgeThreshold && state.currentPage > 0 -> -1
@@ -683,13 +836,44 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                 hovered = if (drag.hoverRemove) HomeDropAction.Remove else null,
                 onBounds = { action, rect -> dropBounds[action] = rect }
             )
+            if (drag.edgeDirection != 0 && !drag.hoverRemove) {
+                EdgeDropIndicator(drag.edgeDirection, state.currentPage, state.pageCount)
+            }
             WidgetDragGhost(drag)
         }
 
-
+        if (homeDrag != null || widgetDrag != null) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .width(80.dp)
+                    .fillMaxHeight()
+                    .systemGestureExclusion()
+            )
+            Box(
+                Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(80.dp)
+                    .fillMaxHeight()
+                    .systemGestureExclusion()
+            )
+        }
 
         state.returning?.let { transition ->
             ReturnGhost(transition, rootSize, viewModel, iconKey)
+        }
+
+        state.openFolder?.let { id ->
+            state.folders[id]?.let { folder ->
+                FolderOverlay(
+                    folder, appsByComponent, state.config, viewModel, iconKey,
+                    hidden = drawerDrag?.fromFolder == true && drawerDrag?.active == true,
+                    onAppDragStart = { app, origin -> drawerDrag = DrawerDrag(app, origin, fromFolder = true) },
+                    onAppDrag = onDrawerAppDrag,
+                    onAppDragEnd = onDrawerAppDragEnd,
+                    onAppDragCancel = { drawerDrag = null }
+                )
+            }
         }
 
         state.menuApp?.let { app ->
@@ -807,6 +991,7 @@ private fun HomePager(
     apps: List<LauncherApp>,
     widgets: List<Int>,
     widgetSizes: Map<Int, WidgetSize>,
+    widgetPlacements: Map<Int, WidgetPlacement>,
     selectedWidgetId: Int?,
     widgetPressGate: WidgetPressGate,
     onWidgetSelect: (Int?) -> Unit,
@@ -822,6 +1007,7 @@ private fun HomePager(
     iconPackKey: String?,
     pageCount: Int,
     currentPage: Int,
+    widgetDrag: WidgetDrag?,
     slotBounds: MutableMap<Int, Rect>,
     drawerHoverSlot: Int?,
     showSlotDots: Boolean,
@@ -849,8 +1035,8 @@ private fun HomePager(
         val target = currentPage.coerceIn(0, safeCount - 1)
         if (pagerState.currentPage != target) pagerState.animateScrollToPage(target)
     }
-    val beyond = homeDrag?.let {
-        (kotlin.math.abs(pagerState.currentPage - it.sourcePage) + 1)
+    val beyond = (homeDrag?.sourcePage ?: widgetDrag?.sourcePage)?.let {
+        (kotlin.math.abs(pagerState.currentPage - it) + 1)
             .coerceAtMost(safeCount - 1)
     } ?: 0
     Column(modifier.fillMaxWidth()) {
@@ -864,6 +1050,7 @@ private fun HomePager(
                 apps = apps,
                 widgets = widgets,
                 widgetSizes = widgetSizes,
+                widgetPlacements = widgetPlacements,
                 selectedWidgetId = selectedWidgetId,
                 widgetPressGate = widgetPressGate,
                 onWidgetSelect = onWidgetSelect,
@@ -881,6 +1068,7 @@ private fun HomePager(
                 drawerHoverSlot = drawerHoverSlot,
                 showSlotDots = showSlotDots,
                 pageCount = safeCount,
+                widgetDrag = widgetDrag,
                 homeDrag = homeDrag,
                 onHomeDragStart = onHomeDragStart,
                 onHomeDrag = onHomeDrag,
@@ -905,6 +1093,7 @@ private fun HomePage(
     apps: List<LauncherApp>,
     widgets: List<Int>,
     widgetSizes: Map<Int, WidgetSize>,
+    widgetPlacements: Map<Int, WidgetPlacement>,
     selectedWidgetId: Int?,
     widgetPressGate: WidgetPressGate,
     onWidgetSelect: (Int?) -> Unit,
@@ -921,6 +1110,7 @@ private fun HomePage(
     slotBounds: MutableMap<Int, Rect>,
     drawerHoverSlot: Int?,
     showSlotDots: Boolean,
+    widgetDrag: WidgetDrag?,
     homeDrag: HomeDrag?,
     onHomeDragStart: (LauncherApp, Int, Rect) -> Unit,
     onHomeDrag: (Offset) -> Unit,
@@ -929,13 +1119,36 @@ private fun HomePage(
 ) {
     val pageSize = config.columns * HOME_ROWS
     val pageStart = page * pageSize
-    val pageWidgets = if (page == 0) widgets else emptyList()
+    val pageWidgets = remember(widgets, widgetPlacements, page) {
+        widgets.filter { (widgetPlacements[it]?.page ?: 0) == page }
+    }
     val pageWidgetSizes = remember(pageWidgets, widgetSizes, config.columns) {
         pageWidgets.associateWith { id ->
             val size = widgetSizes[id] ?: WidgetSize(1, 1)
             WidgetSize(
                 size.columns.coerceIn(1, config.columns),
                 size.rows.coerceIn(1, HOME_GRID_ROWS)
+            )
+        }
+    }
+    val pageWidgetPlacements = remember(
+        pageWidgets,
+        widgetPlacements,
+        pageWidgetSizes,
+        config.columns
+    ) {
+        pageWidgets.associateWith { id ->
+            val size = pageWidgetSizes[id] ?: WidgetSize(1, 1)
+            val placement = widgetPlacements[id] ?: WidgetPlacement(0, 0)
+            WidgetPlacement(
+                placement.column.coerceIn(
+                    0,
+                    (config.columns - size.columns).coerceAtLeast(0)
+                ),
+                placement.row.coerceIn(
+                    0,
+                    (HOME_GRID_ROWS - size.rows).coerceAtLeast(0)
+                )
             )
         }
     }
@@ -946,12 +1159,7 @@ private fun HomePage(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val gapX = 4.dp
         val gapY = 10.dp
-        val widgetRows = remember(pageWidgets, pageWidgetSizes, config.columns) {
-            widgetLineRows(pageWidgets, pageWidgetSizes, config.columns)
-        }
-        val totalRows = HOME_GRID_ROWS + widgetRows
-        val rowHeight = ((maxHeight - 12.dp - gapY * (totalRows - 1)) / totalRows)
-            .coerceAtLeast(44.dp)
+        val rowHeight = ((maxHeight - 42.dp) / HOME_GRID_ROWS).coerceAtLeast(60.dp)
         val slotHeight = rowHeight
         val cellWidth = (maxWidth - gapX * (config.columns - 1)) / config.columns
         LazyVerticalGrid(
@@ -960,36 +1168,25 @@ private fun HomePage(
             horizontalArrangement = Arrangement.spacedBy(gapX), verticalArrangement = Arrangement.spacedBy(gapY),
             contentPadding = PaddingValues(top = 4.dp, bottom = 8.dp)
         ) {
-            pageWidgets.forEach { id ->
-                val size = pageWidgetSizes[id] ?: WidgetSize(1, 1)
-                item(key = "widget-$id", span = { GridItemSpan(size.columns) }) {
-                    WidgetView(
-                        id = id,
-                        host = viewModel.widgetHost,
-                        size = size,
-                        rowHeight = rowHeight,
-                        cellWidth = cellWidth,
-                        maxColumns = config.columns,
-                        maxRows = HOME_GRID_ROWS,
-                        selected = selectedWidgetId == id,
-                        pressGate = widgetPressGate,
-                        onSelect = onWidgetSelect,
-                        onResize = onWidgetResize,
-                        onDragStart = { origin -> onWidgetDragStart(id, origin) },
-                        onDrag = onWidgetDrag,
-                        onDragEnd = onWidgetDragEnd,
-                        onDragCancel = onWidgetDragCancel
-                    )
-                }
-            }
             items(config.columns * HOME_GRID_ROWS, key = { "home-slot-${pageStart + it}" }) { offset ->
                 val slot = pageStart + offset
                 val app = appsBySlot[slot]
                 val isDropTarget = (homeDrag?.hoverSlot == slot && homeDrag.app.key != app?.key) ||
                     drawerHoverSlot == slot
+                // Dropping an app on an app/folder merges them, so preview a folder instead of a box.
+                // Drawer drags (homeDrag == null) are always real apps.
+                val mergeTarget = isDropTarget && app != null && !app.component.isShortcut &&
+                    homeDrag?.app?.isApp != false
                 DisposableEffect(slot) { onDispose { slotBounds.remove(slot) } }
                 Box(Modifier.fillMaxWidth().height(slotHeight)
-                    .then(if (isDropTarget) Modifier.border(2.dp, NothingRed, RoundedCornerShape(18.dp)) else Modifier)
+                    .then(
+                        when {
+                            mergeTarget -> Modifier.background(Color.White.copy(alpha = 0.16f), RoundedCornerShape(22.dp))
+                                .border(2.dp, Color.White.copy(alpha = 0.8f), RoundedCornerShape(22.dp))
+                            isDropTarget -> Modifier.border(2.dp, NothingRed, RoundedCornerShape(18.dp))
+                            else -> Modifier
+                        }
+                    )
                     .onGloballyPositioned { c -> val b = c.boundsInRoot(); slotBounds[slot] = Rect(b.left.roundToInt(), b.top.roundToInt(), b.right.roundToInt(), b.bottom.roundToInt()) },
                     contentAlignment = Alignment.Center) {
                     if (app == null) {
@@ -1013,6 +1210,55 @@ private fun HomePage(
                 }
             }
         }
+        pageWidgets.forEach { id ->
+            val size = pageWidgetSizes[id] ?: WidgetSize(1, 1)
+            val placement = pageWidgetPlacements[id] ?: WidgetPlacement(0, 0)
+            val x = cellWidth * placement.column + gapX * placement.column
+            val y = 4.dp + rowHeight * placement.row + gapY * placement.row
+            Box(Modifier.offset(x = x, y = y)) {
+                WidgetView(
+                    id = id,
+                    host = viewModel.widgetHost,
+                    size = size,
+                    rowHeight = rowHeight,
+                    cellWidth = cellWidth,
+                    maxColumns = config.columns,
+                    maxRows = HOME_GRID_ROWS,
+                    selected = selectedWidgetId == id,
+                    pressGate = widgetPressGate,
+                    onSelect = onWidgetSelect,
+                    onResize = onWidgetResize,
+                    onDragStart = { origin -> onWidgetDragStart(id, origin) },
+                    onDrag = onWidgetDrag,
+                    onDragEnd = onWidgetDragEnd,
+                    onDragCancel = onWidgetDragCancel
+                )
+            }
+        }
+        val preview = widgetDrag
+        if (preview != null && preview.targetPage == page) {
+            val size = widgetSizes[preview.id] ?: WidgetSize(1, 1)
+            val width = cellWidth * size.columns + gapX * (size.columns - 1)
+            val height = rowHeight * size.rows + gapY * (size.rows - 1)
+            val x = cellWidth * preview.targetColumn + gapX * preview.targetColumn
+            val y = 4.dp + rowHeight * preview.targetRow + gapY * preview.targetRow
+            Box(
+                Modifier
+                    .offset(x = x, y = y)
+                    .size(width, height)
+                    .border(
+                        2.dp,
+                        if (preview.targetValid) Color.White else NothingRed,
+                        RoundedCornerShape(18.dp)
+                    )
+                    .background(
+                        (if (preview.targetValid) Color.White else NothingRed)
+                            .copy(alpha = 0.08f),
+                        RoundedCornerShape(18.dp)
+                    )
+                    .zIndex(30f)
+            )
+        }
         if (appsBySlot.isEmpty() && pageWidgets.isEmpty() && homeDrag == null) {
             Text(
                 if (page == 0) "Swipe up for apps. Long-press the home screen for widgets and settings."
@@ -1030,11 +1276,14 @@ private fun HomePage(
 private enum class HomeDropAction(val label: String) {
     Remove("REMOVE"),
     Uninstall("UNINSTALL"),
-    AppInfo("APP INFO")
+    AppInfo("APP INFO"),
+    Cancel("CANCEL")
 }
 
 private fun homeDropActions(viewModel: LauncherViewModel, app: LauncherApp): List<HomeDropAction> =
-    if (viewModel.canUninstall(app)) {
+    if (app.folderId != null) {
+        listOf(HomeDropAction.Remove)
+    } else if (viewModel.canUninstall(app)) {
         listOf(HomeDropAction.Remove, HomeDropAction.Uninstall)
     } else {
         listOf(HomeDropAction.Remove, HomeDropAction.AppInfo)
@@ -1046,6 +1295,8 @@ private fun HomeDropBar(
     hovered: HomeDropAction?,
     onBounds: (HomeDropAction, Rect) -> Unit
 ) {
+    val density = LocalDensity.current
+    val padding = with(density) { 22.dp.toPx() }.roundToInt()
     Row(
         Modifier
             .fillMaxWidth()
@@ -1071,10 +1322,10 @@ private fun HomeDropBar(
                         onBounds(
                             action,
                             Rect(
-                                b.left.roundToInt(),
-                                b.top.roundToInt(),
-                                b.right.roundToInt(),
-                                b.bottom.roundToInt()
+                                b.left.roundToInt() - padding,
+                                b.top.roundToInt() - padding,
+                                b.right.roundToInt() + padding,
+                                b.bottom.roundToInt() + padding
                             )
                         )
                     }
@@ -1104,13 +1355,121 @@ private class HomeDrag(
     var actionTarget by mutableStateOf<HomeDropAction?>(null)
 }
 
-private class WidgetDrag(val id: Int, val origin: Rect) {
+private class WidgetDrag(val id: Int, val origin: Rect, val sourcePage: Int) {
     var offset by mutableStateOf(Offset.Zero)
     var hoverRemove by mutableStateOf(false)
+    var edgeDirection by mutableIntStateOf(0)
+    var edgeConsumed by mutableStateOf(false)
+    var targetPage by mutableIntStateOf(-1)
+    var targetColumn by mutableIntStateOf(0)
+    var targetRow by mutableIntStateOf(0)
+    var targetValid by mutableStateOf(false)
 }
 
 private class WidgetPressGate {
     var down = false
+}
+
+private class WidgetTouchLayer(context: Context) : FrameLayout(context) {
+    var onLongPress: (() -> Unit)? = null
+    var onDragStart: ((Float, Float) -> Unit)? = null
+    var onDrag: ((Float, Float) -> Unit)? = null
+    var onDragEnd: (() -> Unit)? = null
+    var onDragCancel: (() -> Unit)? = null
+
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val longPressTimeout = ViewConfiguration.getLongPressTimeout().toLong()
+    private var downX = 0f
+    private var downY = 0f
+    private var lastX = 0f
+    private var lastY = 0f
+    private var longPressed = false
+    private var dragging = false
+    private val longPress = Runnable {
+        if (!longPressed) {
+            longPressed = true
+            parent?.requestDisallowInterceptTouchEvent(true)
+            onLongPress?.invoke()
+        }
+    }
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                removeCallbacks(longPress)
+                downX = ev.x
+                downY = ev.y
+                lastX = downX
+                lastY = downY
+                longPressed = false
+                dragging = false
+                postDelayed(longPress, longPressTimeout)
+                return false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!longPressed) {
+                    if (hypot((ev.x - downX).toDouble(), (ev.y - downY).toDouble()) >
+                        touchSlop
+                    ) {
+                        removeCallbacks(longPress)
+                    }
+                    return false
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(longPress)
+                return longPressed
+            }
+        }
+        return longPressed
+    }
+
+    override fun onTouchEvent(ev: MotionEvent): Boolean {
+        if (!longPressed) return false
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_MOVE -> {
+                if (!dragging) {
+                    if (hypot((ev.x - downX).toDouble(), (ev.y - downY).toDouble()) <=
+                        touchSlop
+                    ) return true
+                    dragging = true
+                    lastX = downX
+                    lastY = downY
+                    onDragStart?.invoke(downX, downY)
+                }
+                val dx = ev.x - lastX
+                val dy = ev.y - lastY
+                lastX = ev.x
+                lastY = ev.y
+                if (dx != 0f || dy != 0f) onDrag?.invoke(dx, dy)
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                if (dragging) onDragEnd?.invoke()
+                reset()
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                if (dragging) onDragCancel?.invoke()
+                reset()
+                return true
+            }
+        }
+        return true
+    }
+
+    override fun onDetachedFromWindow() {
+        reset()
+        super.onDetachedFromWindow()
+    }
+
+    private fun reset() {
+        removeCallbacks(longPress)
+        longPressed = false
+        dragging = false
+        parent?.requestDisallowInterceptTouchEvent(false)
+    }
 }
 
 @Composable
@@ -1251,35 +1610,6 @@ private fun PageStepButton(label: String, enabled: Boolean, onClick: () -> Unit)
     }
 }
 
-private fun widgetLineRows(
-    widgets: List<Int>,
-    sizes: Map<Int, WidgetSize>,
-    columns: Int
-): Int {
-    var lines = 0
-    var used = 0
-    var lineRows = 0
-    widgets.forEach { id ->
-        val size = sizes[id] ?: return@forEach
-        val width = size.columns.coerceIn(1, columns)
-        val height = size.rows.coerceAtLeast(1)
-        if (used > 0 && used + width > columns) {
-            lines += lineRows
-            used = 0
-            lineRows = 0
-        }
-        used += width
-        lineRows = maxOf(lineRows, height)
-        if (used >= columns) {
-            lines += lineRows
-            used = 0
-            lineRows = 0
-        }
-    }
-    if (used > 0) lines += lineRows
-    return lines
-}
-
 @Composable
 private fun WidgetView(
     id: Int,
@@ -1308,6 +1638,11 @@ private fun WidgetView(
     val previewWidth = cellWidth * preview.columns + 4.dp * (preview.columns - 1)
     val previewHeight = rowHeight * preview.rows + 10.dp * (preview.rows - 1)
     val currentSize = rememberUpdatedState(size)
+    val currentOnSelect = rememberUpdatedState(onSelect)
+    val currentOnDragStart = rememberUpdatedState(onDragStart)
+    val currentOnDrag = rememberUpdatedState(onDrag)
+    val currentOnDragEnd = rememberUpdatedState(onDragEnd)
+    val currentOnDragCancel = rememberUpdatedState(onDragCancel)
 
     Box(
         Modifier
@@ -1346,55 +1681,41 @@ private fun WidgetView(
                     }
                 }
             }
-            .pointerInput(id) {
-                var dragging = false
-                var moved = Offset.Zero
-                var pressBounds = Rect()
-                detectDragGesturesAfterLongPress(
-                    onDragStart = {
-                        pressBounds = bounds
-                        onSelect(id)
-                    },
-                    onDragEnd = {
-                        if (dragging) onDragEnd()
-                    },
-                    onDragCancel = {
-                        if (dragging) onDragCancel()
-                    },
-                    onDrag = { _, amount ->
-                        if (dragging) {
-                            onDrag(amount)
-                        } else {
-                            moved += amount
-                            if (moved.getDistance() > 4.dp.toPx()) {
-                                dragging = true
-                                onDragStart(pressBounds)
-                                onDrag(moved)
-                            }
-                        }
-                    }
-                )
-            }
     ) {
         AndroidView(
             factory = { ctx ->
-                runCatching {
-                    val info = AppWidgetManager.getInstance(ctx).getAppWidgetInfo(id)
-                    host.createView(ctx, id, info).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                    }.also { hostView = it }
-                }.getOrElse {
-                    hostView = null
-                    View(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
+                val layer = WidgetTouchLayer(ctx).apply {
+                    this.onLongPress = { currentOnSelect.value(id) }
+                    this.onDragStart = { x, y ->
+                        val width = bounds.width().coerceAtLeast(1)
+                        val height = bounds.height().coerceAtLeast(1)
+                        val touch = Offset(bounds.left + x, bounds.top + y)
+                        currentOnDragStart.value(
+                            Rect(
+                                (touch.x - width / 2f).roundToInt(),
+                                (touch.y - height / 2f).roundToInt(),
+                                (touch.x + width / 2f).roundToInt(),
+                                (touch.y + height / 2f).roundToInt()
+                            )
                         )
                     }
+                    this.onDrag = { dx, dy -> currentOnDrag.value(Offset(dx, dy)) }
+                    this.onDragEnd = { currentOnDragEnd.value() }
+                    this.onDragCancel = { currentOnDragCancel.value() }
                 }
+                val child = runCatching {
+                    val info = AppWidgetManager.getInstance(ctx).getAppWidgetInfo(id)
+                    host.createView(ctx, id, info).also { hostView = it }
+                }.getOrElse {
+                    hostView = null
+                    View(ctx)
+                }
+                child.layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+                layer.addView(child)
+                layer
             },
             modifier = Modifier
                 .fillMaxSize()
@@ -1495,7 +1816,12 @@ private fun WidgetView(
     }
 }
 
-private class DrawerDrag(val app: LauncherApp, val origin: Rect) {
+private class DrawerDrag(
+    val app: LauncherApp,
+    val origin: Rect,
+    val fromFolder: Boolean = false
+) {
+    var actionTarget by mutableStateOf<HomeDropAction?>(null)
     var offset by mutableStateOf(Offset.Zero)
     var active by mutableStateOf(false)
     var hoverSlot by mutableIntStateOf(-1)

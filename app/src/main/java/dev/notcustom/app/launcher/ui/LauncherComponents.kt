@@ -65,6 +65,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import dev.notcustom.app.launcher.LauncherApp
+import dev.notcustom.app.launcher.NotificationDotService
+import androidx.compose.runtime.collectAsState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.offset
 import dev.notcustom.app.launcher.LauncherConfig
 import dev.notcustom.app.launcher.LauncherViewModel
 import dev.notcustom.app.launcher.AtAGlanceStyle
@@ -297,6 +302,8 @@ fun AppCell(
         label = "returnScale"
     )
     var iconBounds by remember { mutableStateOf<Rect?>(null) }
+    var cellBounds by remember { mutableStateOf<Rect?>(null) }
+    var cellScale by remember { mutableStateOf(1f) }
     var suppressClickUntil by remember { mutableStateOf(0L) }
     val view = LocalView.current
 
@@ -307,6 +314,20 @@ fun AppCell(
     val cellModifier = if (dragEnabled && onDragStart != null && onDrag != null && onDragEnd != null) {
         modifier
             .zIndex(if (isDragging) 3f else 0f)
+            .onGloballyPositioned { coordinates ->
+                val b = coordinates.boundsInRoot()
+                cellBounds = Rect(
+                    b.left.roundToInt(),
+                    b.top.roundToInt(),
+                    b.right.roundToInt(),
+                    b.bottom.roundToInt()
+                )
+                cellScale = if (coordinates.size.width > 0) {
+                    b.width / coordinates.size.width
+                } else {
+                    1f
+                }
+            }
             .graphicsLayer {
                 if (isDragging) {
                     if (sourceHidden) {
@@ -328,11 +349,39 @@ fun AppCell(
                     Modifier
                 }
             )
+            // Click must sit outside the drag detector: inside, it consumes the finger-up first and a
+            // hold-without-moving becomes a cancelled drag, so the app menu never opens.
+            .clickable(
+                interactionSource = interaction,
+                indication = null
+            ) {
+                if (SystemClock.uptimeMillis() >= suppressClickUntil) {
+                    viewModel.launch(app, iconBounds, fromHome, view)
+                }
+            }
             .pointerInput(app.key) {
                 detectDragGesturesAfterLongPress(
-                    onDragStart = {
+                    onDragStart = { start ->
                         suppressClickUntil = Long.MAX_VALUE
-                        currentDragStart?.invoke(iconBounds)
+                        val cell = cellBounds
+                        val icon = iconBounds
+                        val ghost = if (cell != null && icon != null) {
+                            val touch = Offset(
+                                cell.left + start.x * cellScale,
+                                cell.top + start.y * cellScale
+                            )
+                            val width = icon.width().toFloat().coerceAtLeast(1f)
+                            val height = icon.height().toFloat().coerceAtLeast(1f)
+                            Rect(
+                                (touch.x - width / 2f).roundToInt(),
+                                (touch.y - height / 2f).roundToInt(),
+                                (touch.x + width / 2f).roundToInt(),
+                                (touch.y + height / 2f).roundToInt()
+                            )
+                        } else {
+                            icon
+                        }
+                        currentDragStart?.invoke(ghost)
                     },
                     onDragEnd = {
                         suppressClickUntil = SystemClock.uptimeMillis() + 250
@@ -344,17 +393,9 @@ fun AppCell(
                     },
                     onDrag = { change, amount ->
                         change.consume()
-                        currentDrag?.invoke(amount)
+                        currentDrag?.invoke(amount * cellScale)
                     }
                 )
-            }
-            .clickable(
-                interactionSource = interaction,
-                indication = null
-            ) {
-                if (SystemClock.uptimeMillis() >= suppressClickUntil) {
-                    viewModel.launch(app, iconBounds, fromHome, view)
-                }
             }
     } else {
         modifier
@@ -393,7 +434,27 @@ fun AppCell(
                     currentOnPosition?.invoke(app.key, iconBounds)
                 }
         ) {
-            AppIcon(icon, config.iconSize, config.monochrome)
+            if (app.folderId != null) {
+                FolderIcon(app, config.iconSize, config.monochrome, viewModel, iconPackKey)
+            } else {
+                AppIcon(icon, config.iconSize, config.monochrome)
+            }
+            val notified by NotificationDotService.packages.collectAsState()
+            val hasDot = if (app.folderId != null) {
+                app.folderApps.any { it.packageName in notified }
+            } else {
+                app.packageName in notified
+            }
+            if (hasDot) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 2.dp, y = (-2).dp)
+                        .size((config.iconSize * 0.2f).dp.coerceAtLeast(9.dp))
+                        .background(NothingRed, CircleShape)
+                        .border(1.5.dp, Color.Black.copy(alpha = 0.6f), CircleShape)
+                )
+            }
         }
         if (showLabel) {
             Spacer(Modifier.height(6.dp))

@@ -13,10 +13,42 @@ data class LauncherApp(
     val packageName: String,
     val user: UserHandle = Process.myUserHandle(),
     val category: String = "Other",
-    val system: Boolean = false
+    val system: Boolean = false,
+    /** Set for a pinned deep shortcut placed on Home (e.g. Chrome "Add to Home screen"). */
+    val shortcutId: String? = null,
+    /** Set for a Home folder. */
+    val folderId: String? = null,
+    /** Folder contents, carried on the item so the folder icon redraws when they change. */
+    val folderApps: List<ComponentName> = emptyList()
 ) {
     val key: String get() = "${component.flattenToString()}#${user.hashCode()}"
+    val isApp: Boolean get() = shortcutId == null && folderId == null
 }
+
+/** Folder on Home or in the dock. [apps] are real app components, in display order. */
+@Immutable
+data class HomeFolder(val id: String, val name: String, val apps: List<ComponentName>)
+
+// Shortcuts and folders occupy Home slots through synthetic components, so every slot,
+// dock and drag path treats them like apps without a second placement model.
+const val SHORTCUT_PACKAGE = "notcustom.shortcut"
+const val FOLDER_PACKAGE = "notcustom.folder"
+
+fun shortcutComponent(packageName: String, shortcutId: String) =
+    ComponentName(SHORTCUT_PACKAGE, "$packageName/$shortcutId")
+
+fun folderComponent(id: String) = ComponentName(FOLDER_PACKAGE, id)
+
+val ComponentName.isFolder: Boolean get() = packageName == FOLDER_PACKAGE
+val ComponentName.isShortcut: Boolean get() = packageName == SHORTCUT_PACKAGE
+
+fun HomeFolder.toItem() = LauncherApp(
+    component = folderComponent(id),
+    label = name,
+    packageName = FOLDER_PACKAGE,
+    folderId = id,
+    folderApps = apps
+)
 
 data class WidgetChoice(
     val info: AppWidgetProviderInfo,
@@ -27,6 +59,9 @@ data class WidgetChoice(
 
 @Immutable
 data class WidgetSize(val columns: Int, val rows: Int)
+
+@Immutable
+data class WidgetPlacement(val column: Int, val row: Int, val page: Int = 0)
 
 enum class AtAGlanceStyle {
     CLOCK,

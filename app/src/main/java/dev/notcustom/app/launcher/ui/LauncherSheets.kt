@@ -93,6 +93,7 @@ fun AppMenuSheet(
             value = viewModel.loadIcon(app)
         }
         val pinned = state.pinned.contains(app.component)
+        val inFolder = remember(app, state.folders) { viewModel.folderOf(app) }
         var movePageMenuOpen by remember { mutableStateOf(false) }
 
         Column(
@@ -103,7 +104,11 @@ fun AppMenuSheet(
                 .padding(bottom = 24.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                AppIcon(icon, 44, false)
+                if (app.folderId != null) {
+                    FolderIcon(app, 44, false, viewModel, state.iconPack)
+                } else {
+                    AppIcon(icon, 44, false)
+                }
                 Spacer(Modifier.width(14.dp))
                 Column {
                     Text(
@@ -112,17 +117,28 @@ fun AppMenuSheet(
                         color = Paper
                     )
                     Text(
-                        app.packageName,
+                        when {
+                            app.folderId != null -> "Folder · ${app.folderApps.size} apps"
+                            app.shortcutId != null -> "Shortcut · ${app.packageName}"
+                            else -> app.packageName
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = Muted
                     )
                 }
             }
             Spacer(Modifier.height(14.dp))
-            MenuAction(if (pinned) "REMOVE FROM HOME" else "ADD TO HOME") {
-                if (pinned) viewModel.unpin(app) else viewModel.pin(app)
+            if (inFolder != null) {
+                MenuAction("REMOVE FROM FOLDER") { viewModel.removeFromFolder(app) }
+            } else if (app.folderId != null) {
+                MenuAction("OPEN FOLDER") { viewModel.openFolder(app.folderId) }
+                MenuAction("REMOVE FOLDER FROM HOME") { viewModel.unpin(app) }
+            } else {
+                MenuAction(if (pinned) "REMOVE FROM HOME" else "ADD TO HOME") {
+                    if (pinned) viewModel.unpin(app) else viewModel.pin(app)
+                }
             }
-            Box {
+            if (inFolder == null) Box {
                 MenuAction(if (pinned) "MOVE TO PAGE" else "ADD TO PAGE") {
                     movePageMenuOpen = true
                 }
@@ -146,11 +162,11 @@ fun AppMenuSheet(
                 viewModel.dismissMenu()
                 viewModel.openSettings()
             }
-            if (viewModel.widgetChoices(app.packageName).isNotEmpty()) {
+            if (app.isApp && viewModel.widgetChoices(app.packageName).isNotEmpty()) {
                 MenuAction("ADD WIDGET") { viewModel.openWidgetPicker(app.packageName) }
             }
-            MenuAction("HIDE APP") { viewModel.hide(app) }
-            MenuAction("APP INFO") { viewModel.appInfo(app) }
+            if (app.isApp) MenuAction("HIDE APP") { viewModel.hide(app) }
+            if (app.folderId == null) MenuAction("APP INFO") { viewModel.appInfo(app) }
             if (viewModel.canUninstall(app)) {
                 MenuAction("UNINSTALL") { viewModel.uninstall(app) }
             }
@@ -158,7 +174,7 @@ fun AppMenuSheet(
                 initialValue = emptyList<ShortcutInfo>(),
                 app.key
             ) {
-                value = viewModel.shortcuts(app)
+                value = if (app.isApp) viewModel.shortcuts(app) else emptyList()
             }
             if (shortcuts.isNotEmpty()) {
                 Spacer(Modifier.height(12.dp))
@@ -198,6 +214,40 @@ private fun ShortcutRow(
             color = Paper,
             maxLines = 1
         )
+    }
+}
+
+@Composable
+private fun AccessRow(
+    title: String,
+    enabled: Boolean,
+    readyText: String,
+    needText: String,
+    onClick: () -> Unit
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .width(7.dp)
+                .height(7.dp)
+                .background(if (enabled) Ok else NothingRed, CircleShape)
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.labelSmall, color = Muted)
+            Text(
+                if (enabled) readyText else needText,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (enabled) Muted else Paper
+            )
+        }
+        TextButton(onClick = onClick) {
+            Text(
+                if (enabled) "SETTINGS" else "ENABLE",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (enabled) Muted else NothingRed
+            )
+        }
     }
 }
 
@@ -381,44 +431,21 @@ fun LauncherSettingsSheet(
             }
             Spacer(Modifier.height(18.dp))
 
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    Modifier
-                        .width(7.dp)
-                        .height(7.dp)
-                        .background(
-                            if (state.accessibilityEnabled) Ok else NothingRed,
-                            CircleShape
-                        )
-                )
-                Spacer(Modifier.width(8.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "GESTURE ACCESS",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Muted
-                    )
-                    Text(
-                        if (state.accessibilityEnabled) {
-                            "Double-tap screen-off and swipe-down notifications are ready."
-                        } else {
-                            "Enable for double-tap screen-off and swipe-down notifications."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (state.accessibilityEnabled) Muted else Paper
-                    )
-                }
-                TextButton(onClick = viewModel::openAccessibilitySettings) {
-                    Text(
-                        if (state.accessibilityEnabled) "SETTINGS" else "ENABLE",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (state.accessibilityEnabled) Muted else NothingRed
-                    )
-                }
-            }
+            AccessRow(
+                title = "GESTURE ACCESS",
+                enabled = state.accessibilityEnabled,
+                readyText = "Double-tap screen-off is ready.",
+                needText = "Enable for double-tap screen-off.",
+                onClick = viewModel::openAccessibilitySettings
+            )
+            Spacer(Modifier.height(6.dp))
+            AccessRow(
+                title = "NOTIFICATION DOTS",
+                enabled = state.notificationDotsEnabled,
+                readyText = "Apps with notifications show a red dot.",
+                needText = "Allow notification access to show dots on icons.",
+                onClick = viewModel::openNotificationDotSettings
+            )
             Spacer(Modifier.height(10.dp))
 
             Row(

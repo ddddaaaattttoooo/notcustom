@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -130,7 +131,7 @@ fun AppDrawer(
     }
 
     Surface(
-        color = Color(0xF70A0A0B),
+        color = Color(0xFF0A0A0B),
         modifier = Modifier
             .fillMaxSize()
             .graphicsLayer { alpha = if (dragActive) 0f else 1f }
@@ -345,6 +346,9 @@ fun AppDrawer(
                     Modifier
                         .fillMaxSize()
                         .background(Color(0xFA0A0A0B))
+                        .pointerInput(folder) {
+                            detectTapGestures { openFolder = null }
+                        }
                         .statusBarsPadding()
                         .navigationBarsPadding()
                         .padding(horizontal = 18.dp)
