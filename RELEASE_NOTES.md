@@ -16,6 +16,8 @@
 - Pressing Back on Home no longer reloads the launcher with a blank screen
 - Dragging an app away and back no longer opens its menu
 - Large widgets follow your finger while dragging and can be dropped on REMOVE again
+- Dragging an app into the rightmost column no longer throws it onto the next page
+- Removing a page also removes its folders, so their apps can be added to Home again
 
 ## NotCustom 0.3.25-beta
 

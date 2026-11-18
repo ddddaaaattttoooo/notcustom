@@ -733,6 +733,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             }
         val pageCount = current.pageCount - 1
         val currentPage = current.currentPage.coerceIn(0, pageCount - 1)
+        // Folders on the removed page go with it; otherwise their apps stay stuck "in" a hidden folder.
+        val folders = current.folders.filterKeys { folderComponent(it) !in pageApps }
+        if (folders.size != current.folders.size) prefs.folders = folders.values.toList()
         val (pinned, dock) = writePlacements(shifted)
         prefs.pageCount = pageCount
         prefs.currentPage = currentPage
@@ -742,6 +745,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _state.update {
             it.copy(
                 pinPositions = shifted,
+                folders = folders,
+                openFolder = it.openFolder?.takeIf { id -> id in folders },
                 pinned = pinned,
                 dock = dock,
                 pageCount = pageCount,
