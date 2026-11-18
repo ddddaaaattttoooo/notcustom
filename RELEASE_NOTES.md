@@ -15,6 +15,7 @@
 - Docked apps are spread evenly; empty dock slots only appear while dragging
 - Pressing Back on Home no longer reloads the launcher with a blank screen
 - Dragging an app away and back no longer opens its menu
+- Large widgets follow your finger while dragging and can be dropped on REMOVE again
 
 ## NotCustom 0.3.25-beta
 

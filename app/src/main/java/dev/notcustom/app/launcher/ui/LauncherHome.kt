@@ -1405,8 +1405,6 @@ private class WidgetTouchLayer(context: Context) : FrameLayout(context) {
                 removeCallbacks(longPress)
                 downX = ev.x
                 downY = ev.y
-                lastX = downX
-                lastY = downY
                 longPressed = false
                 dragging = false
                 postDelayed(longPress, longPressTimeout)
@@ -1440,14 +1438,15 @@ private class WidgetTouchLayer(context: Context) : FrameLayout(context) {
                         touchSlop
                     ) return true
                     dragging = true
-                    lastX = downX
-                    lastY = downY
+                    // Screen coordinates: Home zooms out while dragging, so local deltas would overshoot.
+                    lastX = ev.rawX - (ev.x - downX)
+                    lastY = ev.rawY - (ev.y - downY)
                     onDragStart?.invoke(downX, downY)
                 }
-                val dx = ev.x - lastX
-                val dy = ev.y - lastY
-                lastX = ev.x
-                lastY = ev.y
+                val dx = ev.rawX - lastX
+                val dy = ev.rawY - lastY
+                lastX = ev.rawX
+                lastY = ev.rawY
                 if (dx != 0f || dy != 0f) onDrag?.invoke(dx, dy)
                 return true
             }
