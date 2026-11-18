@@ -199,7 +199,8 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
         ),
         label = "homeEditScale"
     )
-    val edgeThreshold = with(density) { 64.dp.toPx() }
+    // Narrow enough that the rightmost column stays droppable; pages only flip after a dwell.
+    val edgeThreshold = with(density) { 28.dp.toPx() }
     val drawerDragActive = drawerDrag?.active == true
     val homeDragActiveState = rememberUpdatedState(homeDragActive)
 
@@ -289,7 +290,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                     drag.edgeDirection = direction
                     drag.edgeConsumed = false
                 }
-                val target = if (direction != 0 || dockTarget >= 0) {
+                val target = if (dockTarget >= 0) {
                     -1
                 } else {
                     homeSlotBounds.entries.firstOrNull {
@@ -597,10 +598,6 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                             val fallback = current.widgetPlacements[drag.id]
                                 ?: WidgetPlacement(0, 0, current.currentPage)
                             var page = drag.targetPage
-                            if (page < 0 && drag.edgeDirection != 0 && !drag.edgeConsumed) {
-                                page = (current.currentPage + drag.edgeDirection)
-                                    .coerceIn(0, MAX_HOME_PAGES - 1)
-                            }
                             if (page < 0) page = current.currentPage
                             val column = if (drag.targetPage == page) {
                                 drag.targetColumn
@@ -658,8 +655,6 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                             }
                         } else if (moved) {
                             when {
-                                drag.edgeDirection != 0 && !drag.edgeConsumed ->
-                                    viewModel.movePinnedToAdjacentPage(drag.app, drag.edgeDirection)
                                 drag.hoverDockSlot >= 0 ->
                                     viewModel.movePinnedToSlot(drag.app, -(drag.hoverDockSlot + 1))
                                 drag.edgeConsumed -> {
@@ -748,8 +743,6 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
                             when {
                                 drag.hoverDockSlot >= 0 ->
                                     viewModel.movePinnedToSlot(drag.app, -(drag.hoverDockSlot + 1))
-                                drag.edgeDirection != 0 && !drag.edgeConsumed ->
-                                    viewModel.movePinnedToAdjacentPage(drag.app, drag.edgeDirection)
                                 drag.edgeConsumed -> {
                                     val pageSize = state.config.columns * HOME_ROWS
                                     val landingPage = viewModel.state.value.currentPage
