@@ -9,6 +9,12 @@
 - App menus and settings sheets open fully and stay dark over the navigation bar, even when the phone uses a light system theme
 - New setup screen: app logo, a home screen step that shows whether NotCustom is your default, and optional Shizuku tweaks
 - One logo everywhere: the app icon now matches the dot grid used in the app, the home menu button and the project page
+- New widgets are added at the size their app asks for instead of a single cell, shrinking only if the page is too full
+- SMART drawer categories with four or fewer apps no longer show repeated ALL tiles
+- Home shows page dots only; add or remove pages from the Home long-press menu, so a stray tap can't delete a page
+- Docked apps are spread evenly; empty dock slots only appear while dragging
+- Pressing Back on Home no longer reloads the launcher with a blank screen
+- Dragging an app away and back no longer opens its menu
 
 ## NotCustom 0.3.25-beta
 
