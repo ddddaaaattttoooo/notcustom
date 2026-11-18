@@ -1314,9 +1314,10 @@ private fun WidgetView(
             .width(previewWidth)
             .height(previewHeight)
             .padding(vertical = 4.dp)
-            .then(
-                if (selected) Modifier.border(2.dp, NothingRed, RoundedCornerShape(18.dp))
-                else Modifier
+            .border(
+                2.dp,
+                if (selected) NothingRed else Color.Transparent,
+                RoundedCornerShape(18.dp)
             )
             .onGloballyPositioned { c ->
                 val b = c.boundsInRoot()
@@ -1347,7 +1348,7 @@ private fun WidgetView(
             }
             .pointerInput(id) {
                 var dragging = false
-                var moved = 0f
+                var moved = Offset.Zero
                 var pressBounds = Rect()
                 detectDragGesturesAfterLongPress(
                     onDragStart = {
@@ -1361,12 +1362,16 @@ private fun WidgetView(
                         if (dragging) onDragCancel()
                     },
                     onDrag = { _, amount ->
-                        moved += amount.getDistance()
-                        if (!dragging && moved > 6.dp.toPx()) {
-                            dragging = true
-                            onDragStart(pressBounds)
+                        if (dragging) {
+                            onDrag(amount)
+                        } else {
+                            moved += amount
+                            if (moved.getDistance() > 4.dp.toPx()) {
+                                dragging = true
+                                onDragStart(pressBounds)
+                                onDrag(moved)
+                            }
                         }
-                        if (dragging) onDrag(amount)
                     }
                 )
             }
@@ -1415,13 +1420,6 @@ private fun WidgetView(
         if (selected) {
             Box(
                 Modifier
-                    .matchParentSize()
-                    .pointerInput(id) {
-                        detectTapGestures { onSelect(null) }
-                    }
-            )
-            Box(
-                Modifier
                     .align(Alignment.TopStart)
                     .padding(8.dp)
                     .clip(RoundedCornerShape(8.dp))
@@ -1438,7 +1436,7 @@ private fun WidgetView(
                 Modifier
                     .align(Alignment.BottomEnd)
                     .padding(6.dp)
-                    .size(32.dp)
+                    .size(38.dp)
                     .clip(CircleShape)
                     .background(NothingRed)
                     .border(1.dp, Color.White.copy(alpha = 0.55f), CircleShape)

@@ -1,3 +1,10 @@
+## NotCustom 0.3.25-beta
+
+- Long-press a widget to pick it up again; moving your finger keeps the usual drag-to-remove flow
+- The resize frame no longer cancels the drag gesture when it appears
+- The corner resize handle is larger and easier to grab
+- Changing a widget's size updates its Android layout so clock and calendar widgets reflow correctly
+
 ## NotCustom 0.3.24-beta
 
 - Resize any Home widget: long-press it to select, then drag the corner handle to change its width and height in grid cells
