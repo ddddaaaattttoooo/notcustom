@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.26-beta"><img alt="Download NotCustom 0.3.26-beta" src="https://img.shields.io/badge/Download-NotCustom%200.3.26--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
+  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.27-beta"><img alt="Download NotCustom 0.3.27-beta" src="https://img.shields.io/badge/Download-NotCustom%200.3.27--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
 </p>
 
 <p align="center">
@@ -61,7 +61,7 @@ NotCustom is a monochrome Android launcher with pages, folders, widgets, a smart
 
 ## Install
 
-1. Open the [release page](https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.26-beta) on your phone and download `NotCustom-0.3.26-beta-release.apk`.
+1. Open the [release page](https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.27-beta) on your phone and download `NotCustom-0.3.27-beta-release.apk`.
 2. Open the file. If Android asks, allow your browser or Files app to install unknown apps, then tap **Install**.
 3. Open NotCustom and tap **SET AS HOME**, or press Home and choose **NotCustom Home** → **Always**.
 4. Optional: in Home Settings, turn on notification dots and gesture access. Sideloaded apps may need **App info → Allow restricted settings** first.
