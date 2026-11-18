@@ -557,7 +557,11 @@ private fun SmartCategoryCard(
                         repeat(2) { column ->
                             val index = row * 2 + column
                             val app = apps.getOrNull(index)
-                            if (index < 3 && app != null) {
+                            // Up to four apps launch directly; with more, the fourth slot opens the rest.
+                            val overflow = apps.size > 4 && index == 3
+                            if (app == null) {
+                                Spacer(Modifier.weight(1f).height(50.dp))
+                            } else if (!overflow) {
                                 AppCell(
                                     app = app,
                                     config = miniConfig,

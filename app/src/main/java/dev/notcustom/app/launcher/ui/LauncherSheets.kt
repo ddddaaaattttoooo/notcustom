@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -353,7 +354,8 @@ fun LauncherSettingsSheet(
         containerColor = Surface0,
         contentColor = Paper,
         dragHandle = { BottomSheetDefaults.DragHandle() },
-        contentWindowInsets = { WindowInsets(0) },
+        // Settings is tall enough to reach the top, so keep it below the status bar.
+        contentWindowInsets = { WindowInsets.statusBars },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ) {
         DarkSheetSystemBars()
@@ -817,13 +819,16 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
     }
 }
 
-/** M3 sheets follow the system theme; NotCustom is always dark, so keep the nav bar dark too. */
+/** M3 sheets follow the system theme; NotCustom is always dark, so keep both system bars dark too. */
 @Composable
 private fun DarkSheetSystemBars() {
     val view = androidx.compose.ui.platform.LocalView.current
     SideEffect {
         val window = (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window ?: return@SideEffect
         window.isNavigationBarContrastEnforced = false
-        androidx.core.view.WindowCompat.getInsetsController(window, view).isAppearanceLightNavigationBars = false
+        androidx.core.view.WindowCompat.getInsetsController(window, view).apply {
+            isAppearanceLightNavigationBars = false
+            isAppearanceLightStatusBars = false
+        }
     }
 }
