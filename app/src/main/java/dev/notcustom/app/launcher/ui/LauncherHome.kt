@@ -1882,6 +1882,9 @@ private fun ReturnGhost(
 }
 
 
+// Without READ_WALLPAPER_INTERNAL this throws on newer Android; runCatching returns null and the
+// system wallpaper behind the window (windowShowWallpaper) is shown instead, just without parallax.
+@android.annotation.SuppressLint("MissingPermission")
 private fun loadWallpaper(context: android.content.Context): ImageBitmap? = runCatching {
     val manager = WallpaperManager.getInstance(context)
     val drawable = manager.drawable ?: return@runCatching null
