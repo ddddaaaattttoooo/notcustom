@@ -1,3 +1,15 @@
+## NotCustom 0.3.26-beta
+
+- Folders: drop an app onto another app on Home to make a folder, rename it, and drag apps back out of an open folder just like on Home
+- Notification dots on app icons (turn on in Home Settings and allow notification access)
+- Swipe down on Home opens the notification shade without the accessibility service
+- Apps can pin shortcuts to Home ("Add to Home screen" from Chrome, Contacts and others)
+- Hold an app without moving to open its menu, on Home and in the drawer; long-press inside a folder keeps the folder open behind the menu
+- Uninstall from drag-to-uninstall and from the app menu works on Android 9+ instead of being silently ignored
+- App menus and settings sheets open fully and stay dark over the navigation bar, even when the phone uses a light system theme
+- New setup screen: app logo, a home screen step that shows whether NotCustom is your default, and optional Shizuku tweaks
+- One logo everywhere: the app icon now matches the dot grid used in the app, the home menu button and the project page
+
 ## NotCustom 0.3.25-beta
 
 - Long-press a widget to pick it up again; moving your finger keeps the usual drag-to-remove flow
