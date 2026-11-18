@@ -12,8 +12,8 @@ android {
         applicationId = "dev.notcustom.app"
         minSdk = 31
         targetSdk = 34
-        versionCode = 29
-        versionName = "0.3.26-beta"
+        versionCode = 30
+        versionName = "0.3.27-beta"
     }
 
     signingConfigs {

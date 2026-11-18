@@ -1,3 +1,10 @@
+## NotCustom 0.3.27-beta
+
+- Large widgets follow your finger while dragging and can be dropped on REMOVE again
+- Dragging an app into the rightmost column no longer throws it onto the next page
+- Removing a page also removes its folders, so their apps can be added to Home again
+- Fresh screenshots on the project pages
+
 ## NotCustom 0.3.26-beta
 
 - Folders: drop an app onto another app on Home to make a folder, rename it, and drag apps back out of an open folder just like on Home
@@ -15,9 +22,6 @@
 - Docked apps are spread evenly; empty dock slots only appear while dragging
 - Pressing Back on Home no longer reloads the launcher with a blank screen
 - Dragging an app away and back no longer opens its menu
-- Large widgets follow your finger while dragging and can be dropped on REMOVE again
-- Dragging an app into the rightmost column no longer throws it onto the next page
-- Removing a page also removes its folders, so their apps can be added to Home again
 
 ## NotCustom 0.3.25-beta
 
