@@ -40,6 +40,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A release published by hand for this tag is kept as is.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; leaving it unchanged."
+            exit 0
+          fi
           gh release create "$GITHUB_REF_NAME" release/NotCustom-*-release.apk \
             --title "NotCustom $GITHUB_REF_NAME" \
             --notes-file RELEASE_NOTES.md \
