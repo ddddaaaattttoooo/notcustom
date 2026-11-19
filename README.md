@@ -6,6 +6,7 @@
   <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.27-beta"><img alt="Download NotCustom 0.3.27-beta" src="https://img.shields.io/badge/Download-NotCustom%200.3.27--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
   <br />
   <a href="https://ko-fi.com/ddddaaaattttoooo"><img alt="Support NotCustom on Ko-fi" src="https://img.shields.io/badge/Support-on%20Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white" /></a>
+  <a href="https://discord.gg/gr4uwUyYTG"><img alt="Join the Discord" src="https://img.shields.io/badge/Join-on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" /></a>
 </p>
 
 <p align="center">
