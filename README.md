@@ -4,6 +4,8 @@
 
 <p align="center">
   <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.27-beta"><img alt="Download NotCustom 0.3.27-beta" src="https://img.shields.io/badge/Download-NotCustom%200.3.27--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
+  <br />
+  <a href="https://ko-fi.com/ddddaaaattttoooo"><img alt="Support NotCustom on Ko-fi" src="https://img.shields.io/badge/Support-on%20Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white" /></a>
 </p>
 
 <p align="center">
@@ -11,7 +13,6 @@
   <img alt="No root" src="https://img.shields.io/badge/root-not%20needed-111214?style=flat-square" />
   <img alt="No tracking" src="https://img.shields.io/badge/tracking-none-111214?style=flat-square" />
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-111214?style=flat-square" />
-  <a href="https://ko-fi.com/ddddaaaattttoooo"><img alt="Support on Ko-fi" src="https://img.shields.io/badge/Ko--fi-support-ed1c24?style=flat-square&logo=kofi&logoColor=white" /></a>
 </p>
 
 NotCustom is a monochrome Android launcher with pages, folders, widgets, a smart app drawer and notification dots, plus optional Shizuku-powered system tweaks. It takes visual cues from Nothing OS and leaves your phone's own launcher untouched.
