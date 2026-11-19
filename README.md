@@ -11,6 +11,7 @@
   <img alt="No root" src="https://img.shields.io/badge/root-not%20needed-111214?style=flat-square" />
   <img alt="No tracking" src="https://img.shields.io/badge/tracking-none-111214?style=flat-square" />
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-111214?style=flat-square" />
+  <a href="https://ko-fi.com/ddddaaaattttoooo"><img alt="Support on Ko-fi" src="https://img.shields.io/badge/Ko--fi-support-ed1c24?style=flat-square&logo=kofi&logoColor=white" /></a>
 </p>
 
 NotCustom is a monochrome Android launcher with pages, folders, widgets, a smart app drawer and notification dots, plus optional Shizuku-powered system tweaks. It takes visual cues from Nothing OS and leaves your phone's own launcher untouched.
@@ -99,6 +100,10 @@ The APK is written to `app/build/outputs/apk/debug/`. Release builds use the sha
 Found a bug? Open an [issue](https://github.com/ddddaaaattttoooo/notcustom/issues) with your phone model, Android version, NotCustom version and steps to reproduce. Please leave out private logs and personal data.
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the build and review workflow.
+
+## Support
+
+NotCustom is free and has no ads or tracking. If it is useful to you, you can support development on [Ko-fi](https://ko-fi.com/ddddaaaattttoooo).
 
 ## License
 
