@@ -1,3 +1,34 @@
+## NotCustom 0.4.0-beta
+
+**New settings**
+- Home Settings is now a full-screen menu with one page per topic: Home screen, Icons, At a Glance, App drawer, Widgets, Gestures & access, Backup & reset and About
+- The update checker sits at the top of Settings
+- System tweaks open from the bottom of Settings; NotCustom's own icon no longer shows in the drawer, on Home or in search
+
+**Home and drawer**
+- Back up your layout to a file and restore it later or on a new phone (pages, dock, folders, hidden apps and settings; widgets need adding again)
+- Your next calendar event in the coming 24 hours shows under the date (optional, asks for calendar access, read on the phone only); tap it to open your calendar
+- Themed icons: apps that support Android 13 themed icons get a light-on-dark icon
+- Search now also finds Android settings pages (Wi-Fi, Bluetooth, Battery and more), does quick maths like 12*3, and can search the web; Enter opens the only matching app
+- Haptics when you pick up an app or widget and when a drag snaps to a slot, the dock or a drop target
+- The long-press hint in the drawer hides while you search
+
+**Faster**
+- Icons load six at a time and reuse the app list instead of asking Android again for each one
+- Home icons no longer get pushed out of memory and pop in again when you have many apps
+- The app list, shortcuts and icon packs load at the same time
+
+**System tweaks without Shizuku**
+- Tweaks work without Shizuku where Android allows it; Shizuku is now optional
+- New PHONE card: screen timeout, auto-rotate, touch sounds and touch vibration
+- New font weight slider from thin to bold, like on iPhone and Pixel
+- Font size and the PHONE card need one ALLOW switch on the phone
+- Animation speed and font weight need a one-time grant: `adb shell pm grant dev.notcustom.app android.permission.WRITE_SECURE_SETTINGS`, or connect Shizuku once and NotCustom grants it for good
+- Density still needs Shizuku; without it, NotCustom opens Android's Display size
+- Presets, RESET and the Quick Settings tile apply what they can and skip the rest
+- Fixed: RESET and APPLY preset no longer change your display size. Density only changes when you tap a density option
+- The Tweaks screen no longer scrolls under the status bar, and the font size labels have room to breathe
+
 ## NotCustom 0.3.27-beta
 
 - Large widgets follow your finger while dragging and can be dropped on REMOVE again
