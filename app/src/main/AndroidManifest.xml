@@ -21,6 +21,10 @@
 
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
+        <!-- Every app that offers widgets, including ones with no app icon (e.g. a phone maker's widget package). -->
+        <intent>
+            <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
