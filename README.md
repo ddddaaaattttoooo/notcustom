@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.4.0-beta"><img alt="Download NotCustom 0.4.0-beta" src="https://img.shields.io/badge/Download-NotCustom%200.4.0--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
+  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.4.1-beta"><img alt="Download NotCustom 0.4.1-beta" src="https://img.shields.io/badge/Download-NotCustom%200.4.1--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
   <br />
   <a href="https://ko-fi.com/ddddaaaattttoooo"><img alt="Support NotCustom on Ko-fi" src="https://img.shields.io/badge/Support-on%20Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white" /></a>
   <a href="https://discord.gg/gr4uwUyYTG"><img alt="Join the Discord" src="https://img.shields.io/badge/Join-on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" /></a>
@@ -57,7 +57,7 @@ back any time.
 
 ## Install
 
-1. Download `NotCustom-0.4.0-beta-release.apk` from the [release page](https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.4.0-beta) on your phone.
+1. Download `NotCustom-0.4.1-beta-release.apk` from the [release page](https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.4.1-beta) on your phone.
 2. Open it and allow the install.
 3. Press **Home**, choose **NotCustom Home**, tap **Always**.
 

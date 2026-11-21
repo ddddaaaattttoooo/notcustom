@@ -1,3 +1,8 @@
+## NotCustom 0.4.1-beta
+
+- About now spells the developer's name correctly: ddddaaaattttoooo
+- The widget picker now also lists widgets from apps that have no app icon, which Android was hiding from NotCustom
+
 ## NotCustom 0.4.0-beta
 
 **New settings**
