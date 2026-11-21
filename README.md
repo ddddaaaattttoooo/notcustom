@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.27-beta"><img alt="Download NotCustom 0.3.27-beta" src="https://img.shields.io/badge/Download-NotCustom%200.3.27--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
+  <a href="https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.4.0-beta"><img alt="Download NotCustom 0.4.0-beta" src="https://img.shields.io/badge/Download-NotCustom%200.4.0--beta-ed1c24?style=for-the-badge&logo=android&logoColor=white" /></a>
   <br />
   <a href="https://ko-fi.com/ddddaaaattttoooo"><img alt="Support NotCustom on Ko-fi" src="https://img.shields.io/badge/Support-on%20Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white" /></a>
   <a href="https://discord.gg/gr4uwUyYTG"><img alt="Join the Discord" src="https://img.shields.io/badge/Join-on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" /></a>
@@ -16,78 +16,84 @@
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-111214?style=flat-square" />
 </p>
 
-NotCustom is a monochrome Android launcher with pages, folders, widgets, a smart app drawer and notification dots, plus optional Shizuku-powered system tweaks. It takes visual cues from Nothing OS and leaves your phone's own launcher untouched.
+NotCustom is a black-and-white Android home screen inspired by Nothing OS.
+Pages, folders, widgets, a smart app drawer, and system tweaks that work
+without root. Your phone's own launcher stays untouched, so you can switch
+back any time.
 
-> Not affiliated with Nothing Technology Limited. NotCustom needs no root and adds no Glyph features.
+<p align="center">
+  <img src="assets/screenshots/home.png" width="30%" alt="Home with the clock, next calendar event, apps, a widget and the dock" />
+  <img src="assets/screenshots/drawer.png" width="30%" alt="App drawer" />
+  <img src="assets/screenshots/smart.png" width="30%" alt="SMART drawer grouping apps into categories" />
+</p>
+<p align="center">
+  <img src="assets/screenshots/folder.png" width="30%" alt="An open folder" />
+  <img src="assets/screenshots/menu.png" width="30%" alt="App menu with shortcuts" />
+  <img src="assets/screenshots/search.png" width="30%" alt="Search showing a Wi-Fi settings shortcut and web search" />
+</p>
+<p align="center">
+  <img src="assets/screenshots/settings.png" width="30%" alt="Settings with the update checker on top" />
+  <img src="assets/screenshots/glance.png" width="30%" alt="At a Glance settings with calendar events" />
+  <img src="assets/screenshots/tweaks.png" width="30%" alt="System tweaks: screen timeout, toggles and font weight" />
+</p>
+<p align="center">
+  <img src="assets/screenshots/icons.png" width="30%" alt="Icon settings with themed icons" />
+  <img src="assets/screenshots/tweaks-top.png" width="30%" alt="NotCustom app with animation speed presets" />
+  <img src="assets/screenshots/about.png" width="30%" alt="About page" />
+</p>
 
-## Screenshots
+> Not affiliated with Nothing Technology Limited.
 
-<table>
-  <tr>
-    <td align="center"><img src="assets/screenshots/home.png" width="200" alt="Home screen with apps, a folder, a widget and the dock" /><br /><sub><b>Home</b></sub></td>
-    <td align="center"><img src="assets/screenshots/drawer.png" width="200" alt="App drawer in grid mode" /><br /><sub><b>App drawer</b></sub></td>
-    <td align="center"><img src="assets/screenshots/smart.png" width="200" alt="SMART drawer grouping apps into categories" /><br /><sub><b>SMART drawer</b></sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="assets/screenshots/folder.png" width="200" alt="An open folder on Home" /><br /><sub><b>Folders</b></sub></td>
-    <td align="center"><img src="assets/screenshots/drag.png" width="200" alt="Dragging an app with Remove and App info targets" /><br /><sub><b>Drag and drop</b></sub></td>
-    <td align="center"><img src="assets/screenshots/menu.png" width="200" alt="App menu with shortcuts and actions" /><br /><sub><b>App menu</b></sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="assets/screenshots/widgets.png" width="200" alt="Widget picker" /><br /><sub><b>Widgets</b></sub></td>
-    <td align="center"><img src="assets/screenshots/settings.png" width="200" alt="Home settings" /><br /><sub><b>Home settings</b></sub></td>
-    <td align="center"><img src="assets/screenshots/setup.png" width="200" alt="NotCustom setup screen" /><br /><sub><b>Setup</b></sub></td>
-  </tr>
-</table>
+## What it does
 
-## Features
-
-**Home screen**
-- Multiple pages, drag-and-drop placement, and a five-slot dock
-- Folders: drop one app onto another, rename the folder, and drag apps back out
-- Android widgets at their natural size, resizable from the corner handle
-- Notification dots, app shortcuts, and pinned shortcuts from other apps
-- Hold an app for its menu, or drag it onto REMOVE, UNINSTALL or APP INFO
-- Clock, battery status or next alarm in the header, in 12 or 24-hour time
-
-**App drawer**
-- GRID, LIST and SMART modes; SMART groups apps into categories like Nothing OS
-- Instant search, hidden apps, work-profile and cloned apps with badges
-- Drag any app straight onto a Home page or the dock
-
-**Look and feel**
-- Columns, icon size, icon packs, monochrome icons, labels and search bar
-- Gestures: swipe up for apps, swipe down for notifications, optional double-tap to lock
-
-**Optional system tools** (through Shizuku, no root)
-- Animation speed presets, display density and font scale, and a Quick Settings tile
+- **Home:** pages, folders, a five-slot dock, and widgets you can resize.
+- **At a Glance:** a big clock with the date, your next calendar event, battery or next alarm.
+- **App drawer:** GRID, LIST or SMART, which sorts apps into categories like Nothing OS.
+- **Search:** apps, Android settings pages, quick maths (`12*3`) and web search.
+- **Icons:** icon packs, Pixel-style themed icons, or plain monochrome.
+- **Feels right:** haptics when you pick up and drop, notification dots, app shortcuts.
+- **Backup:** save your layout to a file and restore it on a new phone.
+- **System tweaks:** animation speed, font size and weight, screen timeout, auto-rotate and more.
 
 ## Install
 
-1. Open the [release page](https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.3.27-beta) on your phone and download `NotCustom-0.3.27-beta-release.apk`.
-2. Open the file. If Android asks, allow your browser or Files app to install unknown apps, then tap **Install**.
-3. Open NotCustom and tap **SET AS HOME**, or press Home and choose **NotCustom Home** → **Always**.
-4. Optional: in Home Settings, turn on notification dots and gesture access. Sideloaded apps may need **App info → Allow restricted settings** first.
+1. Download `NotCustom-0.4.0-beta-release.apk` from the [release page](https://github.com/ddddaaaattttoooo/notcustom/releases/tag/v0.4.0-beta) on your phone.
+2. Open it and allow the install.
+3. Press **Home**, choose **NotCustom Home**, tap **Always**.
 
-**Updating:** install the newer APK over the old one, or tap **CHECK** under Software update in Home Settings. Releases since 0.3.23 share one signing key, so updates install in place and keep your layout. Coming from an older build? Uninstall it once first.
+Updating: install the new APK over the old one, or tap **CHECK** at the top of Settings. Your layout stays.
 
-## Compatibility
+## System tweaks
 
-- **Android 12 or newer.** NotCustom uses standard launcher APIs and should work on any brand, including Nothing, Pixel and Samsung.
-- **Tested on** a Nothing Phone (3a) Lite with Nothing OS 4.x and on the Android emulator. Gestures, widgets and launcher selection can vary by manufacturer.
-- **System tweaks** need Shizuku and may not be supported on every Android build. The launcher works without them.
+No root needed, and Shizuku is optional.
 
-## Permissions and privacy
+| Tweak | What it needs |
+|---|---|
+| Font size, screen timeout, auto-rotate, touch sounds and vibration | One **ALLOW** switch on the phone |
+| Animation speed, font weight | One command from a computer, or Shizuku once |
+| Density | Shizuku. Otherwise NotCustom opens Android's Display size |
 
-- **Internet** is used only to check for and download NotCustom updates from its GitHub and GitLab release pages. No analytics, tracking or background uploads.
-- **Notification access** (optional) only counts which apps have notifications, for the dots. Notification content is never read or stored.
-- **Accessibility** (optional) only performs actions you ask for, like opening notifications or locking the screen. It does not read the screen.
-- **Shizuku** (optional) is used only for the system tweaks.
-- Your layout, folders and settings stay on the phone.
+The command, run once over USB debugging:
 
-## Build from source
+```bash
+adb shell pm grant dev.notcustom.app android.permission.WRITE_SECURE_SETTINGS
+```
 
-Requirements: JDK 17 and Android SDK Platform 34.
+NotCustom never changes your display size unless you tap a density option yourself.
+
+## Permissions
+
+| Permission | Why |
+|---|---|
+| Internet | checking for and downloading NotCustom updates, nothing else |
+| Notification access (optional) | counting notifications for the dots, never reading them |
+| Accessibility (optional) | double-tap to lock and pulling down notifications |
+| Calendar (optional) | your next event on Home, read on the phone only |
+| Modify system settings (optional) | the tweaks in the table above |
+
+No analytics, no tracking, no account. Your layout stays on the phone.
+
+## Build
 
 ```bash
 git clone https://github.com/ddddaaaattttoooo/notcustom.git
@@ -95,18 +101,11 @@ cd notcustom
 ./gradlew assembleDebug
 ```
 
-The APK is written to `app/build/outputs/apk/debug/`. Release builds use the shared beta key in `keystore/`; use your own key before distributing a fork.
-
-## Help and contributions
-
-Found a bug? Open an [issue](https://github.com/ddddaaaattttoooo/notcustom/issues) with your phone model, Android version, NotCustom version and steps to reproduce. Please leave out private logs and personal data.
-
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the build and review workflow.
-
-## Support
-
-NotCustom is free and has no ads or tracking. If it is useful to you, you can support development on [Ko-fi](https://ko-fi.com/ddddaaaattttoooo).
+Needs JDK 17 and Android SDK 34. Found a bug? Open an [issue](https://github.com/ddddaaaattttoooo/notcustom/issues) with
+your phone model and Android version. Contributions welcome, see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-NotCustom is released under the [MIT License](LICENSE).
+[MIT](LICENSE). Free, no ads. If you like it, you can support it on
+[Ko-fi](https://ko-fi.com/ddddaaaattttoooo).
