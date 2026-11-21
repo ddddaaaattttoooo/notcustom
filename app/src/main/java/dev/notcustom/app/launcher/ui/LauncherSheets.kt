@@ -807,7 +807,7 @@ fun LauncherSettingsScreen(
                             Spacer(Modifier.height(12.dp))
                             Text("CREDITS", style = MaterialTheme.typography.labelSmall, color = Muted)
                             Text(
-                                "ddddaaaatttoooo",
+                                "ddddaaaattttoooo",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = Paper
                             )
