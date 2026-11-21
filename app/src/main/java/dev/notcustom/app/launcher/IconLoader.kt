@@ -23,7 +23,13 @@ data class IconPackInfo(val packageName: String, val label: String)
 class IconLoader(context: Context) {
     private val appContext = context.applicationContext
     private val launcherApps = appContext.getSystemService(android.content.pm.LauncherApps::class.java)
-    private val cache = LruCache<String, ImageBitmap>(160)
+    // Sized in bytes so a large app list can't evict the Home icons it preloaded first.
+    private val cache = object : LruCache<String, ImageBitmap>(
+        (Runtime.getRuntime().maxMemory() / 8).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    ) {
+        override fun sizeOf(key: String, value: ImageBitmap) = value.width * value.height * 4
+    }
+    private val activityInfos = ConcurrentHashMap<String, android.content.pm.LauncherActivityInfo>()
     private val semaphore = Semaphore(6)
     private val appFilters = ConcurrentHashMap<String, Map<String, String>>()
 
@@ -34,10 +40,23 @@ class IconLoader(context: Context) {
         selectedPack = packageName
     }
 
-    fun peek(key: String): ImageBitmap? = cache.get(cacheKey(key, selectedPack))
+    @Volatile
+    private var themed = false
+
+    fun setThemed(value: Boolean) {
+        themed = value
+    }
+
+    fun peek(key: String): ImageBitmap? = cache.get(cacheKey(key, selectedPack, themed))
+
+    /** Activity infos already fetched by the app list, so icons skip a system call each. */
+    fun remember(key: String, info: android.content.pm.LauncherActivityInfo) {
+        activityInfos[key] = info
+    }
 
     fun clear() {
         cache.evictAll()
+        activityInfos.clear()
         appFilters.clear()
     }
 
@@ -71,13 +90,14 @@ class IconLoader(context: Context) {
 
     suspend fun load(app: LauncherApp): ImageBitmap? = withContext(Dispatchers.IO) {
         val pack = selectedPack
-        val key = cacheKey(app.key, pack)
+        val themedNow = themed && pack == null
+        val key = cacheKey(app.key, pack, themedNow)
         cache.get(key)?.let { return@withContext it }
         semaphore.withPermit {
             cache.get(key)?.let { return@withPermit it }
             val density = appContext.resources.displayMetrics.densityDpi
             val pm = appContext.packageManager
-            val activityInfo = runCatching {
+            val activityInfo = activityInfos[app.key] ?: runCatching {
                 launcherApps.getActivityList(app.packageName, app.user)
                     .firstOrNull { it.componentName == app.component }
             }.getOrNull()
@@ -86,10 +106,11 @@ class IconLoader(context: Context) {
                 ?: runCatching { pm.getActivityIcon(app.component) }.getOrNull()
                 ?: runCatching { pm.getApplicationIcon(app.packageName) }.getOrNull()
                 ?: return@withPermit null
-            val badged = runCatching { pm.getUserBadgedIcon(drawable, app.user) }
+            val shown = if (themedNow) themedIcon(drawable) ?: drawable else drawable
+            val badged = runCatching { pm.getUserBadgedIcon(shown, app.user) }
                 .getOrNull() ?: drawable
             val bitmap = runCatching {
-                badged.toBitmap(width = 168, height = 168).asImageBitmap()
+                badged.toBitmap(width = ICON_PX, height = ICON_PX).asImageBitmap()
             }.getOrNull()
             if (bitmap != null) cache.put(key, bitmap)
             bitmap
@@ -163,5 +184,27 @@ class IconLoader(context: Context) {
         return result
     }
 
-    private fun cacheKey(appKey: String, pack: String?): String = "${pack.orEmpty()}::$appKey"
+    private fun cacheKey(appKey: String, pack: String?, themed: Boolean): String =
+        "${pack.orEmpty()}:${if (themed) "t" else ""}:$appKey"
+
+    /** Android 13+ themed icon: the app's monochrome layer in light grey on a dark circle. Null if the app has none. */
+    private fun themedIcon(drawable: android.graphics.drawable.Drawable): android.graphics.drawable.Drawable? {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return null
+        val mono = (drawable as? android.graphics.drawable.AdaptiveIconDrawable)?.monochrome ?: return null
+        val size = ICON_PX
+        val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF1C1C1E.toInt() }
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+        // Adaptive layers are 108dp with the middle 72dp visible, so draw the layer 1.5x and centred.
+        val bleed = size / 4
+        mono.mutate().apply {
+            setTint(0xFFF4F4F2.toInt())
+            setBounds(-bleed, -bleed, size + bleed, size + bleed)
+            draw(canvas)
+        }
+        return android.graphics.drawable.BitmapDrawable(appContext.resources, bitmap)
+    }
 }
+
+private const val ICON_PX = 168

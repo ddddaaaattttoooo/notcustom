@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.notcustom.app.core.AnimScales
 import dev.notcustom.app.core.Density
+import dev.notcustom.app.core.PhoneSettings
 import dev.notcustom.app.core.Presets
 import dev.notcustom.app.core.Shell
 import dev.notcustom.app.core.ShizukuManager
@@ -26,6 +27,11 @@ data class UiState(
     val fontScale: Float = 1f,
     val density: Density? = null,
     val hasSnapshot: Boolean = false,
+    val canSecure: Boolean = false,
+    val fontWeight: Int = 0,
+    val canSystem: Boolean = false,
+    val phone: PhoneSettings = PhoneSettings(),
+    val canDensity: Boolean = false,
     val message: String? = null
 )
 
@@ -64,20 +70,27 @@ class NotCustomViewModel(application: Application) : AndroidViewModel(applicatio
                 !ShizukuManager.hasPermission() -> ShizukuState.PERMISSION_DENIED
                 else -> ShizukuState.READY
             }
+            val ready = shizuku == ShizukuState.READY
+            // One grant through Shizuku lets animations work later without it, even after reboot.
+            if (ready && !Tweaks.canWriteSecure(app)) runCatching { Tweaks.grantSecureWithShizuku(app) }
             _state.update {
                 it.copy(
                     shizuku = shizuku,
                     loading = false,
-                    hasSnapshot = Presets.exists(app)
+                    hasSnapshot = Presets.exists(app),
+                    canSecure = ready || Tweaks.canWriteSecure(app),
+                    canSystem = ready || Tweaks.canWriteSystem(app),
+                    canDensity = ready
                 )
             }
-            if (shizuku != ShizukuState.READY) return@launch
             runCatching {
-                val anim = Tweaks.animScales()
-                val font = Tweaks.fontScale()
-                val density = Tweaks.density()
+                val anim = Tweaks.animScales(app)
+                val font = Tweaks.fontScale(app)
+                val density = Tweaks.density(app, ready)
+                val phone = Tweaks.phone(app)
+                val weight = Tweaks.fontWeight(app)
                 _state.update {
-                    it.copy(anim = anim, fontScale = font, density = density)
+                    it.copy(anim = anim, fontScale = font, density = density, phone = phone, fontWeight = weight)
                 }
             }.onFailure { t ->
                 _state.update { it.copy(message = t.message) }
@@ -91,15 +104,31 @@ class NotCustomViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setAnim(anim: AnimScales) {
         viewModelScope.launch {
-            runCatching { Tweaks.setAnimScales(anim) }
+            runCatching { Tweaks.setAnimScales(getApplication(), anim) }
                 .onSuccess { _state.update { it.copy(anim = anim, message = null) } }
+                .onFailure { t -> fail(t) }
+        }
+    }
+
+    fun setPhone(phone: PhoneSettings) {
+        viewModelScope.launch {
+            runCatching { Tweaks.setPhone(getApplication(), phone) }
+                .onSuccess { _state.update { it.copy(phone = phone, message = null) } }
+                .onFailure { t -> fail(t) }
+        }
+    }
+
+    fun setFontWeight(value: Int) {
+        viewModelScope.launch {
+            runCatching { Tweaks.setFontWeight(getApplication(), value) }
+                .onSuccess { _state.update { it.copy(fontWeight = value, message = null) } }
                 .onFailure { t -> fail(t) }
         }
     }
 
     fun setFontScale(value: Float) {
         viewModelScope.launch {
-            runCatching { Tweaks.setFontScale(value) }
+            runCatching { Tweaks.setFontScale(getApplication(), value) }
                 .onSuccess { _state.update { it.copy(fontScale = value, message = null) } }
                 .onFailure { t -> fail(t) }
         }
@@ -109,7 +138,7 @@ class NotCustomViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             runCatching {
                 if (dpi == null) Tweaks.resetDensity() else Tweaks.setDensity(dpi)
-                Tweaks.density()
+                Tweaks.density(getApplication(), true)
             }.onSuccess { density ->
                 _state.update { it.copy(density = density, message = null) }
             }.onFailure { t -> fail(t) }
@@ -135,15 +164,7 @@ class NotCustomViewModel(application: Application) : AndroidViewModel(applicatio
         val snapshot = Presets.load(getApplication()) ?: return
         viewModelScope.launch {
             runCatching {
-                Tweaks.setAnimScales(
-                    AnimScales(snapshot.window, snapshot.transition, snapshot.animator)
-                )
-                Tweaks.setFontScale(snapshot.fontScale)
-                if (snapshot.density == null) {
-                    Tweaks.resetDensity()
-                } else {
-                    Tweaks.setDensity(snapshot.density)
-                }
+                Tweaks.apply(getApplication(), snapshot, _state.value.canDensity)
             }.onSuccess {
                 _state.update { it.copy(message = "Preset applied") }
                 refresh()
@@ -153,12 +174,13 @@ class NotCustomViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun resetAll() {
         viewModelScope.launch {
-            runCatching { Tweaks.resetAll() }
+            runCatching { Tweaks.resetAll(getApplication(), _state.value.canDensity) }
                 .onSuccess {
                     _state.update {
                         it.copy(
                             anim = AnimScales(),
                             fontScale = 1f,
+                            fontWeight = 0,
                             message = "Back to stock"
                         )
                     }

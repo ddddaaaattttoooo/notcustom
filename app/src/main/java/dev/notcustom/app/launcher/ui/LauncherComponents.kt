@@ -1,5 +1,7 @@
 package dev.notcustom.app.launcher.ui
 
+import android.net.Uri
+import android.provider.CalendarContract
 import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
@@ -126,6 +128,7 @@ fun BrandMark(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
 fun AtAGlanceHeader(
     style: AtAGlanceStyle,
     use24HourClock: Boolean,
+    showEvents: Boolean,
     onOpenSettings: () -> Unit
 ) {
     val context = LocalContext.current
@@ -156,6 +159,14 @@ fun AtAGlanceHeader(
             while (true) {
                 value = readNextAlarm(context)
                 delay(30_000)
+            }
+        }
+    }
+    val nextEvent by produceState<CalendarEvent?>(initialValue = null, showEvents) {
+        if (showEvents) {
+            while (true) {
+                value = readNextEvent(context)
+                delay(60_000)
             }
         }
     }
@@ -192,6 +203,34 @@ fun AtAGlanceHeader(
                     color = Color.White.copy(alpha = 0.65f)
                 )
             }
+            nextEvent?.let { event ->
+                val start = Instant.ofEpochMilli(event.begin).atZone(ZoneId.systemDefault())
+                val whenText = when {
+                    event.allDay -> "TODAY"
+                    start.toLocalDate() != now.toLocalDate() -> "TOMORROW " + start.format(
+                        DateTimeFormatter.ofPattern(if (use24HourClock) "HH:mm" else "h:mm a", Locale.getDefault())
+                    )
+                    else -> start.format(
+                        DateTimeFormatter.ofPattern(if (use24HourClock) "HH:mm" else "h:mm a", Locale.getDefault())
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "$whenText  ·  ${event.title}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Paper,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse("content://com.android.calendar/time/${event.begin}"))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
+                    }
+                )
+            }
         }
         BrandMark(onClick = onOpenSettings)
     }
@@ -210,6 +249,33 @@ private fun readBatteryStatus(context: Context): Pair<String, String> {
     }
     return (if (percent >= 0) "$percent%" else "--%") to label
 }
+
+private data class CalendarEvent(val title: String, val begin: Long, val allDay: Boolean)
+
+/** Next calendar event in the coming 24 hours, read on the phone only. Null without calendar permission. */
+private fun readNextEvent(context: Context): CalendarEvent? = runCatching {
+    if (context.checkSelfPermission(android.Manifest.permission.READ_CALENDAR) !=
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+    ) return null
+    val now = System.currentTimeMillis()
+    val projection = arrayOf(
+        CalendarContract.Instances.TITLE,
+        CalendarContract.Instances.BEGIN,
+        CalendarContract.Instances.END,
+        CalendarContract.Instances.ALL_DAY
+    )
+    CalendarContract.Instances.query(context.contentResolver, projection, now, now + 24 * 60 * 60 * 1000L)
+        ?.use { cursor ->
+            val events = buildList {
+                while (cursor.moveToNext()) {
+                    if (cursor.getLong(2) <= now) continue
+                    add(CalendarEvent(cursor.getString(0).orEmpty().ifBlank { "Event" }, cursor.getLong(1), cursor.getInt(3) == 1))
+                }
+            }
+            // Timed events first: an all-day event would otherwise hide the next meeting.
+            events.filter { !it.allDay }.minByOrNull { it.begin } ?: events.firstOrNull()
+        }
+}.getOrNull()
 
 private fun readNextAlarm(context: Context): LocalDateTime? = runCatching {
     val alarmManager = context.getSystemService(AlarmManager::class.java)

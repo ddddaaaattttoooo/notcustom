@@ -12,8 +12,8 @@ android {
         applicationId = "dev.notcustom.app"
         minSdk = 31
         targetSdk = 34
-        versionCode = 30
-        versionName = "0.3.27-beta"
+        versionCode = 31
+        versionName = "0.4.0-beta"
     }
 
     signingConfigs {
@@ -76,4 +76,6 @@ dependencies {
 
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
+
+    testImplementation("junit:junit:4.13.2")
 }

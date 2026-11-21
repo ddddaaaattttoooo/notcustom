@@ -6,7 +6,6 @@ import android.content.Intent
 import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
-import dev.notcustom.app.core.AnimScales
 import dev.notcustom.app.core.Presets
 import dev.notcustom.app.core.ShizukuManager
 import dev.notcustom.app.core.Snapshot
@@ -23,7 +22,7 @@ class NotCustomTileService : TileService() {
         super.onStartListening()
         qsTile?.apply {
             label = "NotCustom"
-            state = if (ShizukuManager.hasPermission()) {
+            state = if (canTweak()) {
                 Tile.STATE_INACTIVE
             } else {
                 Tile.STATE_UNAVAILABLE
@@ -34,7 +33,7 @@ class NotCustomTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
-        if (!ShizukuManager.hasPermission()) {
+        if (!canTweak()) {
             openApp()
             return
         }
@@ -49,16 +48,13 @@ class NotCustomTileService : TileService() {
     }
 
     private suspend fun apply(snapshot: Snapshot) {
-        Tweaks.setAnimScales(
-            AnimScales(snapshot.window, snapshot.transition, snapshot.animator)
-        )
-        Tweaks.setFontScale(snapshot.fontScale)
-        if (snapshot.density == null) {
-            Tweaks.resetDensity()
-        } else {
-            Tweaks.setDensity(snapshot.density)
-        }
+        Tweaks.apply(applicationContext, snapshot, shizukuReady())
     }
+
+    private fun shizukuReady() = ShizukuManager.hasPermission()
+
+    private fun canTweak() = shizukuReady() ||
+        Tweaks.canWriteSecure(this) || Tweaks.canWriteSystem(this)
 
     @SuppressLint("StartActivityAndCollapseDeprecated")
     @Suppress("DEPRECATION")

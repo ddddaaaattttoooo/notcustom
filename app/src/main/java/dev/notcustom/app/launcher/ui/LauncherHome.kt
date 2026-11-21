@@ -75,6 +75,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -191,6 +193,22 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
     var selectedWidgetId by remember { mutableStateOf<Int?>(null) }
     val widgetPressGate = remember { WidgetPressGate() }
     val homeEditing = homeDrag != null || widgetDrag != null
+    val haptics = LocalHapticFeedback.current
+    // Buzz on pickup, and tick whenever the drag snaps to a new slot or drop target.
+    val picked = homeDrag != null || widgetDrag != null || drawerDrag != null
+    LaunchedEffect(picked) {
+        if (picked) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
+    val dragTarget = homeDrag?.let { listOf(it.hoverSlot, it.hoverDockSlot, it.actionTarget) }
+        ?: drawerDrag?.let { listOf(it.hoverSlot, it.hoverDockSlot, it.actionTarget) }
+        ?: widgetDrag?.let { listOf(it.hoverRemove) }
+    var lastDragTarget by remember { mutableStateOf<List<Any?>?>(null) }
+    LaunchedEffect(dragTarget) {
+        if (dragTarget != null && lastDragTarget != null && dragTarget != lastDragTarget) {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+        lastDragTarget = dragTarget
+    }
     val homeScale by animateFloatAsState(
         targetValue = if (homeEditing) 0.88f else 1f,
         animationSpec = spring(
@@ -553,6 +571,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
             AtAGlanceHeader(
                 style = state.config.atAGlanceStyle,
                 use24HourClock = state.config.use24HourClock,
+                showEvents = state.config.showEvents,
                 onOpenSettings = viewModel::openSettings
             )
             Spacer(Modifier.height(20.dp))
@@ -881,7 +900,7 @@ fun LauncherRoot(viewModel: LauncherViewModel) {
         }
 
         if (state.settingsOpen) {
-            LauncherSettingsSheet(state, viewModel)
+            LauncherSettingsScreen(state, viewModel)
         }
 
         if (state.widgetPickerOpen) {

@@ -77,7 +77,9 @@ data class LauncherConfig(
     val showSearch: Boolean = true,
     val use24HourClock: Boolean = true,
     val atAGlanceStyle: AtAGlanceStyle = AtAGlanceStyle.CLOCK,
-    val monochrome: Boolean = false
+    val monochrome: Boolean = false,
+    val themedIcons: Boolean = false,
+    val showEvents: Boolean = false
 )
 
 const val HOME_ROWS = 5

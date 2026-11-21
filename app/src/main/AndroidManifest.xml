@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -7,6 +8,16 @@
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <!-- Swipe-down on Home opens notifications without needing the accessibility service. -->
     <uses-permission android:name="android.permission.EXPAND_STATUS_BAR" />
+    <!-- Optional: next calendar event in the At a Glance header, read on the phone only. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- Font size, granted by the user under "Modify system settings". -->
+    <uses-permission
+        android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+    <!-- Animation speed, granted once over adb or by Shizuku; never asked at runtime. -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <queries>
         <package android:name="moe.shizuku.privileged.api" />

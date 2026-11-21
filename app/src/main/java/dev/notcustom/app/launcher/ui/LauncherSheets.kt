@@ -1,5 +1,18 @@
 package dev.notcustom.app.launcher.ui
 
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.activity.compose.BackHandler
+import dev.notcustom.app.launcher.isDefaultHome
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.AnimatedContent
 import android.content.Intent
 import android.content.pm.ShortcutInfo
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -334,410 +347,503 @@ fun HomeMenuSheet(state: LauncherState, viewModel: LauncherViewModel) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/** Settings pages, Pixel style: a list on the first screen, one page per topic. */
+private enum class SettingsPage(val title: String, val summary: String) {
+    MAIN("Settings", ""),
+    HOME("Home screen", "Grid, icon size, pages, labels and search bar"),
+    ICONS("Icons", "Icon pack, themed and monochrome icons"),
+    GLANCE("At a Glance", "Clock, battery, alarm and calendar events"),
+    DRAWER("App drawer", "Hidden apps"),
+    WIDGETS("Widgets", "Add, remove or clear widgets"),
+    ACCESS("Gestures & access", "Double-tap to lock and notification dots"),
+    BACKUP("Backup & reset", "Save, restore or reset your layout"),
+    ABOUT("About", "Version and credits")
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun LauncherSettingsSheet(
+fun LauncherSettingsScreen(
     state: LauncherState,
     viewModel: LauncherViewModel
 ) {
     val context = LocalContext.current
+    val backupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri -> uri?.let(viewModel::exportLayout) }
+    val restoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let(viewModel::importLayout) }
     val roleLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { }
+    val calendarLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> viewModel.setShowEvents(granted) }
     val hiddenApps = remember(state.hidden, state.apps) {
         state.apps.filter { it.packageName in state.hidden }
             .distinctBy { it.packageName }
     }
+    var page by rememberSaveable { mutableStateOf(SettingsPage.MAIN) }
+    val back = { if (page == SettingsPage.MAIN) viewModel.closeSettings() else page = SettingsPage.MAIN }
+    LaunchedEffect(Unit) { viewModel.checkForUpdates() }
 
-    ModalBottomSheet(
-        onDismissRequest = viewModel::closeSettings,
-        containerColor = Surface0,
-        contentColor = Paper,
-        dragHandle = { BottomSheetDefaults.DragHandle() },
-        // Settings is tall enough to reach the top, so keep it below the status bar.
-        contentWindowInsets = { WindowInsets.statusBars },
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    BackHandler(onBack = back)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Ink)
+            // Swallow touches so Home underneath never reacts.
+            .pointerInput(Unit) { detectTapGestures { } }
     ) {
-        DarkSheetSystemBars()
         Column(
             Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
+                .background(Ink)
+                .statusBarsPadding()
                 .navigationBarsPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("HOME SETTINGS", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    "BETA",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = NothingRed
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "NotCustom Home · ${BuildConfig.VERSION_NAME}",
-                style = MaterialTheme.typography.bodySmall,
-                color = Muted
-            )
-
-            LaunchedEffect(Unit) { viewModel.checkForUpdates() }
-
-            val update = state.update
-            Spacer(Modifier.height(12.dp))
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Surface1)
-                    .border(1.dp, Line, RoundedCornerShape(16.dp))
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("SOFTWARE UPDATE", style = MaterialTheme.typography.labelSmall, color = Muted)
-                    Text(
-                        when {
-                            update.downloading -> "DOWNLOADING ${update.latest.orEmpty()}…"
-                            update.checking -> "CHECKING…"
-                            update.available -> "VERSION ${update.latest.orEmpty()} AVAILABLE"
-                            update.message != null -> update.message
-                            else -> "NOT CHECKED"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (update.available) NothingRed else Paper
-                    )
-                }
-                if (update.available) {
-                    Button(
-                        onClick = viewModel::installUpdate,
-                        enabled = !update.downloading,
-                        shape = RoundedCornerShape(50),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = NothingRed,
-                            contentColor = Color.White
-                        )
-                    ) {
-                        Text("INSTALL", style = MaterialTheme.typography.labelSmall)
-                    }
-                } else {
-                    OutlinedButton(
-                        onClick = { viewModel.checkForUpdates(force = true) },
-                        enabled = !update.checking && !update.downloading,
-                        shape = RoundedCornerShape(50),
-                        border = BorderStroke(1.dp, Line),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
-                    ) {
-                        Text("CHECK", style = MaterialTheme.typography.labelSmall)
-                    }
+                TextButton(onClick = back) {
+                    Text("←", style = MaterialTheme.typography.titleMedium, color = Paper)
                 }
             }
-            if (update.available) {
-                Text(
-                    "Downloads from GitHub, then opens Android's installer. Beta builds are debug-signed; if Android refuses the update, uninstall the old copy first.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Muted,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-            }
-            Spacer(Modifier.height(18.dp))
-
-            AccessRow(
-                title = "GESTURE ACCESS",
-                enabled = state.accessibilityEnabled,
-                readyText = "Double-tap screen-off is ready.",
-                needText = "Enable for double-tap screen-off.",
-                onClick = viewModel::openAccessibilitySettings
-            )
-            Spacer(Modifier.height(6.dp))
-            AccessRow(
-                title = "NOTIFICATION DOTS",
-                enabled = state.notificationDotsEnabled,
-                readyText = "Apps with notifications show a red dot.",
-                needText = "Allow notification access to show dots on icons.",
-                onClick = viewModel::openNotificationDotSettings
-            )
-            Spacer(Modifier.height(10.dp))
-
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Blocked by \"Restricted setting\"? Allow it in App Info.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Muted,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(onClick = viewModel::openAppInfo) {
-                    Text(
-                        "APP INFO",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Paper
-                    )
-                }
-            }
-
-            SettingSlider(
-                label = "COLUMNS",
-                value = state.config.columns.toFloat(),
-                range = 3f..6f,
-                steps = 3
-            ) { viewModel.setColumns(it.roundToInt()) }
-
-            SettingSlider(
-                label = "ICON SIZE",
-                value = state.config.iconSize.toFloat(),
-                range = 40f..76f,
-                steps = 9
-            ) { viewModel.setIconSize(it.roundToInt()) }
-
-            Row(
-                Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("HOME PAGES", style = MaterialTheme.typography.labelSmall, color = Muted)
-                    Text(
-                        "${state.pageCount} total  ·  page ${state.currentPage + 1}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Paper
-                    )
-                }
-                PageSheetButton("−", enabled = state.pageCount > 1) {
-                    viewModel.removeCurrentPage()
-                }
-                Spacer(Modifier.width(8.dp))
-                PageSheetButton("+", enabled = state.pageCount < MAX_HOME_PAGES) {
-                    viewModel.addPage()
-                }
-            }
-
-            var iconPackMenuOpen by remember { mutableStateOf(false) }
-            var atAGlanceMenuOpen by remember { mutableStateOf(false) }
-            val selectedPackLabel = state.iconPacks
-                .firstOrNull { it.packageName == state.iconPack }
-                ?.label ?: "SYSTEM DEFAULT"
-            Row(
-                Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("ICON PACK", style = MaterialTheme.typography.labelSmall, color = Muted)
-                    Text(selectedPackLabel, style = MaterialTheme.typography.bodySmall, color = Paper)
-                }
-                Box {
-                    OutlinedButton(
-                        onClick = { iconPackMenuOpen = true },
-                        shape = RoundedCornerShape(50),
-                        border = BorderStroke(1.dp, Line)
-                    ) {
-                        Text("CHANGE", style = MaterialTheme.typography.labelSmall)
-                    }
-                    DropdownMenu(
-                        expanded = iconPackMenuOpen,
-                        onDismissRequest = { iconPackMenuOpen = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("SYSTEM DEFAULT") },
-                            onClick = {
-                                iconPackMenuOpen = false
-                                viewModel.setIconPack(null)
+            AnimatedContent(
+                targetState = page,
+                transitionSpec = {
+                    val forward = targetState != SettingsPage.MAIN
+                    (slideInHorizontally { if (forward) it / 4 else -it / 4 } + fadeIn()) togetherWith
+                        (slideOutHorizontally { if (forward) -it / 4 else it / 4 } + fadeOut())
+                },
+                label = "settings page"
+            ) { current ->
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp)
+                        .padding(bottom = 32.dp)
+                ) {
+                    Text(current.title, style = MaterialTheme.typography.displaySmall, color = Paper)
+                    Spacer(Modifier.height(24.dp))
+                    when (current) {
+                        SettingsPage.MAIN -> {
+                            val update = state.update
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Surface1)
+                                    .border(1.dp, Line, RoundedCornerShape(16.dp))
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("SOFTWARE UPDATE", style = MaterialTheme.typography.labelSmall, color = Muted)
+                                    Text(
+                                        when {
+                                            update.downloading -> "DOWNLOADING ${update.latest.orEmpty()}…"
+                                            update.checking -> "CHECKING…"
+                                            update.available -> "VERSION ${update.latest.orEmpty()} AVAILABLE"
+                                            update.message != null -> update.message
+                                            else -> "NOT CHECKED"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (update.available) NothingRed else Paper
+                                    )
+                                }
+                                if (update.available) {
+                                    Button(
+                                        onClick = viewModel::installUpdate,
+                                        enabled = !update.downloading,
+                                        shape = RoundedCornerShape(50),
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = NothingRed,
+                                            contentColor = Color.White
+                                        )
+                                    ) {
+                                        Text("INSTALL", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { viewModel.checkForUpdates(force = true) },
+                                        enabled = !update.checking && !update.downloading,
+                                        shape = RoundedCornerShape(50),
+                                        border = BorderStroke(1.dp, Line),
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+                                    ) {
+                                        Text("CHECK", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
                             }
-                        )
-                        state.iconPacks.forEach { pack ->
-                            DropdownMenuItem(
-                                text = { Text(pack.label) },
-                                onClick = {
-                                    iconPackMenuOpen = false
-                                    viewModel.setIconPack(pack.packageName)
+                            if (update.available) {
+                                Text(
+                                    "Downloads from GitHub, then opens Android's installer. Beta builds are debug-signed; if Android refuses the update, uninstall the old copy first.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Muted,
+                                    modifier = Modifier.padding(top = 6.dp)
+                                )
+                            }
+                            Spacer(Modifier.height(18.dp))
+                            if (!isDefaultHome(context)) {
+                                SettingsRow("Set as default home", "NotCustom isn't your home screen yet", highlight = true) {
+                                    roleLauncher.launch(homeRoleIntent(context) ?: homeSettingsIntent())
                                 }
-                            )
+                            }
+                            SettingsPage.entries.drop(1).forEach { target ->
+                                SettingsRow(target.title, target.summary) { page = target }
+                            }
+                            SettingsRow("System tweaks", "Animations, fonts, screen timeout and more") {
+                                viewModel.closeSettings()
+                                context.startActivity(
+                                    Intent(context, MainActivity::class.java)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }
                         }
-                        if (state.iconPacks.isEmpty()) {
-                            DropdownMenuItem(
-                                text = { Text("No compatible packs found") },
-                                enabled = false,
-                                onClick = { }
-                            )
-                        }
-                    }
-                }
-            }
+                        SettingsPage.HOME -> {
+                            SettingSlider(
+                                label = "COLUMNS",
+                                value = state.config.columns.toFloat(),
+                                range = 3f..6f,
+                                steps = 3
+                            ) { viewModel.setColumns(it.roundToInt()) }
 
-            Row(
-                Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("AT A GLANCE", style = MaterialTheme.typography.labelSmall, color = Muted)
-                    Text(
-                        when (state.config.atAGlanceStyle) {
-                            AtAGlanceStyle.CLOCK -> "CLOCK + DATE"
-                            AtAGlanceStyle.BATTERY -> "BATTERY STATUS"
-                            AtAGlanceStyle.NEXT_ALARM -> "NEXT ALARM"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Paper
-                    )
-                }
-                Box {
-                    OutlinedButton(
-                        onClick = { atAGlanceMenuOpen = true },
-                        shape = RoundedCornerShape(50),
-                        border = BorderStroke(1.dp, Line)
-                    ) {
-                        Text("CHANGE", style = MaterialTheme.typography.labelSmall)
-                    }
-                    DropdownMenu(
-                        expanded = atAGlanceMenuOpen,
-                        onDismissRequest = { atAGlanceMenuOpen = false }
-                    ) {
-                        listOf(
-                            AtAGlanceStyle.CLOCK to "CLOCK + DATE",
-                            AtAGlanceStyle.BATTERY to "BATTERY STATUS",
-                            AtAGlanceStyle.NEXT_ALARM to "NEXT ALARM"
-                        ).forEach { (style, label) ->
-                            DropdownMenuItem(
-                                text = { Text(label) },
-                                onClick = {
-                                    atAGlanceMenuOpen = false
-                                    viewModel.setAtAGlanceStyle(style)
+                            SettingSlider(
+                                label = "ICON SIZE",
+                                value = state.config.iconSize.toFloat(),
+                                range = 40f..76f,
+                                steps = 9
+                            ) { viewModel.setIconSize(it.roundToInt()) }
+
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("HOME PAGES", style = MaterialTheme.typography.labelSmall, color = Muted)
+                                    Text(
+                                        "${state.pageCount} total  ·  page ${state.currentPage + 1}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Paper
+                                    )
                                 }
+                                PageSheetButton("−", enabled = state.pageCount > 1) {
+                                    viewModel.removeCurrentPage()
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                PageSheetButton("+", enabled = state.pageCount < MAX_HOME_PAGES) {
+                                    viewModel.addPage()
+                                }
+                            }
+                            SwitchRow("APP LABELS", state.config.showLabels) { viewModel.setShowLabels(it) }
+                            SwitchRow("SEARCH BAR", state.config.showSearch) { viewModel.setShowSearch(it) }
+                        }
+                        SettingsPage.ICONS -> {
+                            var iconPackMenuOpen by remember { mutableStateOf(false) }
+                            val selectedPackLabel = state.iconPacks
+                                .firstOrNull { it.packageName == state.iconPack }
+                                ?.label ?: "SYSTEM DEFAULT"
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("ICON PACK", style = MaterialTheme.typography.labelSmall, color = Muted)
+                                    Text(selectedPackLabel, style = MaterialTheme.typography.bodySmall, color = Paper)
+                                }
+                                Box {
+                                    OutlinedButton(
+                                        onClick = { iconPackMenuOpen = true },
+                                        shape = RoundedCornerShape(50),
+                                        border = BorderStroke(1.dp, Line)
+                                    ) {
+                                        Text("CHANGE", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                    DropdownMenu(
+                                        expanded = iconPackMenuOpen,
+                                        onDismissRequest = { iconPackMenuOpen = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("SYSTEM DEFAULT") },
+                                            onClick = {
+                                                iconPackMenuOpen = false
+                                                viewModel.setIconPack(null)
+                                            }
+                                        )
+                                        state.iconPacks.forEach { pack ->
+                                            DropdownMenuItem(
+                                                text = { Text(pack.label) },
+                                                onClick = {
+                                                    iconPackMenuOpen = false
+                                                    viewModel.setIconPack(pack.packageName)
+                                                }
+                                            )
+                                        }
+                                        if (state.iconPacks.isEmpty()) {
+                                            DropdownMenuItem(
+                                                text = { Text("No compatible packs found") },
+                                                enabled = false,
+                                                onClick = { }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            SwitchRow("THEMED ICONS", state.config.themedIcons) { viewModel.setThemedIcons(it) }
+                            Text(
+                                "Like Pixel: apps that support it get a light-on-dark icon. Android 13 or newer, system icons only.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Muted
+                            )
+                            SwitchRow("MONOCHROME ICONS", state.config.monochrome) { viewModel.setMonochrome(it) }
+                        }
+                        SettingsPage.GLANCE -> {
+                            var atAGlanceMenuOpen by remember { mutableStateOf(false) }
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("AT A GLANCE", style = MaterialTheme.typography.labelSmall, color = Muted)
+                                    Text(
+                                        when (state.config.atAGlanceStyle) {
+                                            AtAGlanceStyle.CLOCK -> "CLOCK + DATE"
+                                            AtAGlanceStyle.BATTERY -> "BATTERY STATUS"
+                                            AtAGlanceStyle.NEXT_ALARM -> "NEXT ALARM"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Paper
+                                    )
+                                }
+                                Box {
+                                    OutlinedButton(
+                                        onClick = { atAGlanceMenuOpen = true },
+                                        shape = RoundedCornerShape(50),
+                                        border = BorderStroke(1.dp, Line)
+                                    ) {
+                                        Text("CHANGE", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                    DropdownMenu(
+                                        expanded = atAGlanceMenuOpen,
+                                        onDismissRequest = { atAGlanceMenuOpen = false }
+                                    ) {
+                                        listOf(
+                                            AtAGlanceStyle.CLOCK to "CLOCK + DATE",
+                                            AtAGlanceStyle.BATTERY to "BATTERY STATUS",
+                                            AtAGlanceStyle.NEXT_ALARM to "NEXT ALARM"
+                                        ).forEach { (style, label) ->
+                                            DropdownMenuItem(
+                                                text = { Text(label) },
+                                                onClick = {
+                                                    atAGlanceMenuOpen = false
+                                                    viewModel.setAtAGlanceStyle(style)
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            SwitchRow("24-HOUR CLOCK", state.config.use24HourClock) { viewModel.setUse24HourClock(it) }
+                            SwitchRow("CALENDAR EVENTS", state.config.showEvents) { on ->
+                                val granted = context.checkSelfPermission(android.Manifest.permission.READ_CALENDAR) ==
+                                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                                if (on && !granted) calendarLauncher.launch(android.Manifest.permission.READ_CALENDAR)
+                                else viewModel.setShowEvents(on)
+                            }
+                            Text(
+                                "Shows your next event in the coming 24 hours under the date. Read on the phone only, never uploaded.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Muted
+                            )
+                        }
+                        SettingsPage.DRAWER -> {
+                            Text("HIDDEN APPS", style = MaterialTheme.typography.labelSmall, color = Muted)
+                            Spacer(Modifier.height(8.dp))
+                            if (hiddenApps.isEmpty()) {
+                                Text("None", style = MaterialTheme.typography.bodySmall, color = Muted)
+                            } else {
+                                hiddenApps.forEach { app ->
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            app.label,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Paper,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        TextButton(onClick = { viewModel.unhide(app.packageName) }) {
+                                            Text("RESTORE", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        SettingsPage.WIDGETS -> {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("WIDGETS", style = MaterialTheme.typography.labelSmall, color = Muted)
+                                TextButton(onClick = viewModel::openWidgetPicker) {
+                                    Text("ADD", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                            if (state.widgets.isEmpty()) {
+                                Text("None", style = MaterialTheme.typography.bodySmall, color = Muted)
+                            } else {
+                                state.widgets.forEach { id ->
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            viewModel.widgetLabel(id),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Paper,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        TextButton(onClick = { viewModel.removeWidget(id) }) {
+                                            Text("REMOVE", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = viewModel::clearWidgets,
+                                    shape = RoundedCornerShape(50),
+                                    border = BorderStroke(1.dp, Line)
+                                ) {
+                                    Text("CLEAR ALL WIDGETS", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                        SettingsPage.ACCESS -> {
+                            AccessRow(
+                                title = "GESTURE ACCESS",
+                                enabled = state.accessibilityEnabled,
+                                readyText = "Double-tap screen-off is ready.",
+                                needText = "Enable for double-tap screen-off.",
+                                onClick = viewModel::openAccessibilitySettings
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            AccessRow(
+                                title = "NOTIFICATION DOTS",
+                                enabled = state.notificationDotsEnabled,
+                                readyText = "Apps with notifications show a red dot.",
+                                needText = "Allow notification access to show dots on icons.",
+                                onClick = viewModel::openNotificationDotSettings
+                            )
+                            Spacer(Modifier.height(10.dp))
+
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "Blocked by \"Restricted setting\"? Allow it in App Info.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Muted,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = viewModel::openAppInfo) {
+                                    Text(
+                                        "APP INFO",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Paper
+                                    )
+                                }
+                            }
+                        }
+                        SettingsPage.BACKUP -> {
+                            Text(
+                                "A backup keeps your pages, dock, folders, hidden apps and settings. Widgets need adding again after a restore.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Muted
+                            )
+                            Spacer(Modifier.height(16.dp))
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = { backupLauncher.launch("notcustom-layout.json") },
+                                    shape = RoundedCornerShape(50),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Paper, contentColor = Ink)
+                                ) {
+                                    Text("BACK UP LAYOUT", style = MaterialTheme.typography.labelSmall)
+                                }
+                                OutlinedButton(
+                                    onClick = { restoreLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
+                                    shape = RoundedCornerShape(50),
+                                    border = BorderStroke(1.dp, Line)
+                                ) {
+                                    Text("RESTORE LAYOUT", style = MaterialTheme.typography.labelSmall)
+                                }
+                                OutlinedButton(
+                                    onClick = viewModel::resetLayout,
+                                    shape = RoundedCornerShape(50),
+                                    border = BorderStroke(1.dp, Line)
+                                ) {
+                                    Text("RESET LAYOUT", style = MaterialTheme.typography.labelSmall, color = NothingRed)
+                                }
+                            }
+                        }
+                        SettingsPage.ABOUT -> {
+                            Text(
+                                "NotCustom Home · ${BuildConfig.VERSION_NAME}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Muted
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text("CREDITS", style = MaterialTheme.typography.labelSmall, color = Muted)
+                            Text(
+                                "ddddaaaatttoooo",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Paper
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                "No root. Nothing Launcher is untouched - this is a separate home screen " +
+                                    "you can switch to or away from anytime.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Muted
                             )
                         }
                     }
                 }
             }
-
-            SwitchRow("APP LABELS", state.config.showLabels) { viewModel.setShowLabels(it) }
-            SwitchRow("SEARCH BAR", state.config.showSearch) { viewModel.setShowSearch(it) }
-            SwitchRow("24-HOUR CLOCK", state.config.use24HourClock) { viewModel.setUse24HourClock(it) }
-            SwitchRow("MONOCHROME ICONS", state.config.monochrome) { viewModel.setMonochrome(it) }
-
-            Spacer(Modifier.height(18.dp))
-            Text("HIDDEN APPS", style = MaterialTheme.typography.labelSmall, color = Muted)
-            Spacer(Modifier.height(8.dp))
-            if (hiddenApps.isEmpty()) {
-                Text("None", style = MaterialTheme.typography.bodySmall, color = Muted)
-            } else {
-                hiddenApps.forEach { app ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            app.label,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Paper,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = { viewModel.unhide(app.packageName) }) {
-                            Text("RESTORE", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(18.dp))
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("WIDGETS", style = MaterialTheme.typography.labelSmall, color = Muted)
-                TextButton(onClick = viewModel::openWidgetPicker) {
-                    Text("ADD", style = MaterialTheme.typography.labelSmall)
-                }
-            }
-            if (state.widgets.isEmpty()) {
-                Text("None", style = MaterialTheme.typography.bodySmall, color = Muted)
-            } else {
-                state.widgets.forEach { id ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            viewModel.widgetLabel(id),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Paper,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = { viewModel.removeWidget(id) }) {
-                            Text("REMOVE", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                }
-                OutlinedButton(
-                    onClick = viewModel::clearWidgets,
-                    shape = RoundedCornerShape(50),
-                    border = BorderStroke(1.dp, Line)
-                ) {
-                    Text("CLEAR ALL WIDGETS", style = MaterialTheme.typography.labelSmall)
-                }
-            }
-
-            Spacer(Modifier.height(18.dp))
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = {
-                        roleLauncher.launch(homeRoleIntent(context) ?: homeSettingsIntent())
-                    },
-                    shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Paper,
-                        contentColor = Ink
-                    )
-                ) {
-                    Text("SET AS HOME", style = MaterialTheme.typography.labelSmall)
-                }
-                OutlinedButton(
-                    onClick = viewModel::resetLayout,
-                    shape = RoundedCornerShape(50),
-                    border = BorderStroke(1.dp, Line)
-                ) {
-                    Text("RESET LAYOUT", style = MaterialTheme.typography.labelSmall)
-                }
-                OutlinedButton(
-                    onClick = {
-                        viewModel.closeSettings()
-                        context.startActivity(
-                            Intent(context, MainActivity::class.java)
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        )
-                    },
-                    shape = RoundedCornerShape(50),
-                    border = BorderStroke(1.dp, Line)
-                ) {
-                    Text("OPEN TWEAKS", style = MaterialTheme.typography.labelSmall)
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Text("CREDITS", style = MaterialTheme.typography.labelSmall, color = Muted)
-            Text(
-                "ddddaaaatttoooo",
-                style = MaterialTheme.typography.titleMedium,
-                color = Paper
-            )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "No root. Nothing Launcher is untouched - this is a separate home screen " +
-                    "you can switch to or away from anytime.",
-                style = MaterialTheme.typography.bodySmall,
-                color = Muted
-            )
         }
+    }
+}
+
+@Composable
+private fun SettingsRow(title: String, summary: String, highlight: Boolean = false, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = if (highlight) NothingRed else Paper)
+            if (summary.isNotEmpty()) {
+                Spacer(Modifier.height(2.dp))
+                Text(summary, style = MaterialTheme.typography.bodySmall, color = Muted)
+            }
+        }
+        Text("›", style = MaterialTheme.typography.titleMedium, color = Muted)
     }
 }
 

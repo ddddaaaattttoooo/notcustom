@@ -1,5 +1,6 @@
 package dev.notcustom.app.ui
 
+import android.provider.Settings
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -88,6 +89,8 @@ fun NotCustomApp(viewModel: NotCustomViewModel = viewModel()) {
     var isHome by remember { mutableStateOf(isDefaultHome(context)) }
     LifecycleResumeEffect(Unit) {
         isHome = isDefaultHome(context)
+        // A permission granted in Settings shows up as soon as the user comes back.
+        viewModel.refresh()
         onPauseOrDispose { }
     }
 
@@ -112,16 +115,21 @@ fun NotCustomApp(viewModel: NotCustomViewModel = viewModel()) {
 
             HomeCard(context, isHome) { isHome = isDefaultHome(context) }
             Spacer(Modifier.height(14.dp))
+            ReadyContent(state, viewModel)
+            Spacer(Modifier.height(14.dp))
             SetupCard(state.shizuku, context, viewModel)
-            if (state.shizuku == ShizukuState.READY) {
-                Spacer(Modifier.height(14.dp))
-                ReadyContent(state, viewModel)
-            }
 
             Spacer(Modifier.height(16.dp))
             AboutCard()
             Spacer(Modifier.height(28.dp))
         }
+        // Keeps scrolled cards from running under the status bar icons.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.background)
+                .statusBarsPadding()
+        )
     }
 }
 
@@ -239,6 +247,8 @@ private fun Message(message: String?, onDismiss: () -> Unit) {
 private fun ReadyContent(state: UiState, viewModel: NotCustomViewModel) {
     FeelCard(state, viewModel)
     Spacer(Modifier.height(14.dp))
+    PhoneCard(state, viewModel)
+    Spacer(Modifier.height(14.dp))
     DisplayCard(state, viewModel)
     Spacer(Modifier.height(14.dp))
     PresetCard(state, viewModel)
@@ -270,6 +280,20 @@ private fun SectionCard(
 @Composable
 private fun FeelCard(state: UiState, viewModel: NotCustomViewModel) {
     SectionCard("FEEL", "system animation speed") {
+        if (!state.canSecure) {
+            val context = LocalContext.current
+            Locked(
+                "Android only lets an app change animation speed after a one-time grant. " +
+                    "From a computer, run:\n\nadb shell pm grant ${context.packageName} " +
+                    "android.permission.WRITE_SECURE_SETTINGS\n\nOr connect Shizuku below once. " +
+                    "You can also change it by hand in Developer options."
+            ) {
+                SecondaryButton("DEVELOPER OPTIONS") {
+                    openSettings(context, Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+                }
+            }
+            return@SectionCard
+        }
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -302,6 +326,60 @@ private fun FeelCard(state: UiState, viewModel: NotCustomViewModel) {
     }
 }
 
+private val screenTimeouts = listOf(
+    "15S" to 15_000, "30S" to 30_000, "1M" to 60_000,
+    "2M" to 120_000, "5M" to 300_000, "10M" to 600_000
+)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PhoneCard(state: UiState, viewModel: NotCustomViewModel) {
+    val context = LocalContext.current
+    val phone = state.phone
+    SectionCard("PHONE", "screen, rotation and touch feedback") {
+        if (!state.canSystem) {
+            Locked("Allow NotCustom to modify system settings to change these from here.") {
+                PrimaryButton("ALLOW") {
+                    openSettings(
+                        context,
+                        Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${context.packageName}"))
+                    )
+                }
+            }
+            return@SectionCard
+        }
+        Text("SCREEN TIMEOUT", style = MaterialTheme.typography.labelSmall, color = Muted)
+        Spacer(Modifier.height(8.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            screenTimeouts.forEach { (label, ms) ->
+                ChoiceChip(label, phone.screenTimeoutMs == ms) {
+                    viewModel.setPhone(phone.copy(screenTimeoutMs = ms))
+                }
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        Text("TOGGLES", style = MaterialTheme.typography.labelSmall, color = Muted)
+        Spacer(Modifier.height(8.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ChoiceChip("AUTO-ROTATE", phone.autoRotate) {
+                viewModel.setPhone(phone.copy(autoRotate = !phone.autoRotate))
+            }
+            ChoiceChip("TOUCH SOUNDS", phone.touchSounds) {
+                viewModel.setPhone(phone.copy(touchSounds = !phone.touchSounds))
+            }
+            ChoiceChip("TOUCH VIBRATION", phone.touchVibration) {
+                viewModel.setPhone(phone.copy(touchVibration = !phone.touchVibration))
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DisplayCard(state: UiState, viewModel: NotCustomViewModel) {
@@ -312,10 +390,17 @@ private fun DisplayCard(state: UiState, viewModel: NotCustomViewModel) {
     val roomy = (physical * 1.08f).roundToInt()
     val huge = (physical * 1.20f).roundToInt()
 
+    val context = LocalContext.current
     SectionCard("DISPLAY", "density and text scale") {
         Text("DENSITY", style = MaterialTheme.typography.labelSmall, color = Muted)
         Spacer(Modifier.height(8.dp))
-        FlowRow(
+        if (!state.canDensity) {
+            Locked("Android has no app setting for density. Use Display size in Settings, or connect Shizuku below.") {
+                SecondaryButton("DISPLAY SIZE") {
+                    openSettings(context, Intent(Settings.ACTION_DISPLAY_SETTINGS))
+                }
+            }
+        } else FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -336,14 +421,61 @@ private fun DisplayCard(state: UiState, viewModel: NotCustomViewModel) {
             }
         }
         Spacer(Modifier.height(12.dp))
-        Text(
+        if (state.canDensity) Text(
             "Current: ${density?.effective ?: "-"} dpi",
             style = MaterialTheme.typography.bodySmall,
             color = Muted
         )
 
         Spacer(Modifier.height(18.dp))
+        Text("FONT WEIGHT", style = MaterialTheme.typography.labelSmall, color = Muted)
+        Spacer(Modifier.height(8.dp))
+        if (!state.canSecure) {
+            Text(
+                "Needs the same one-time grant as animation speed (see FEEL).",
+                style = MaterialTheme.typography.bodySmall,
+                color = Muted
+            )
+        } else {
+            var weight by remember(state.fontWeight) { mutableStateOf(state.fontWeight.toFloat()) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("THIN", style = MaterialTheme.typography.labelSmall, color = Muted)
+                Text(
+                    "${400 + weight.roundToInt()}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Paper
+                )
+                Text("BOLD", style = MaterialTheme.typography.labelSmall, color = Muted)
+            }
+            Slider(
+                value = weight,
+                onValueChange = { weight = it },
+                onValueChangeFinished = { viewModel.setFontWeight(weight.roundToInt()) },
+                valueRange = -300f..300f,
+                steps = 11,
+                colors = SliderDefaults.colors(
+                    thumbColor = Paper,
+                    activeTrackColor = Paper,
+                    inactiveTrackColor = Line
+                )
+            )
+        }
+
+        Spacer(Modifier.height(18.dp))
         Text("FONT SIZE", style = MaterialTheme.typography.labelSmall, color = Muted)
+        Spacer(Modifier.height(8.dp))
+        if (!state.canSystem) {
+            Spacer(Modifier.height(8.dp))
+            Locked("Allow NotCustom to modify system settings to change text size from here.") {
+                PrimaryButton("ALLOW") {
+                    openSettings(
+                        context,
+                        Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${context.packageName}"))
+                    )
+                }
+            }
+            return@SectionCard
+        }
         var font by remember(state.fontScale) { mutableStateOf(state.fontScale) }
         Row(
             Modifier.fillMaxWidth(),
@@ -428,18 +560,18 @@ private fun SetupCard(
     StepCard(
         "02",
         "SYSTEM TWEAKS",
-        "optional · animation speed, density, presets",
+        "optional · density, and animation access in one tap",
         status = { ShizukuPill(shizuku) }
     ) {
         val body = when (shizuku) {
             ShizukuState.NOT_INSTALLED ->
-                "Install Shizuku, enable Wireless debugging in Developer options, then start the Shizuku service."
+                "Not needed for text size. Shizuku adds density and grants animation access once. Install it, enable Wireless debugging in Developer options, then start the Shizuku service."
             ShizukuState.NOT_RUNNING ->
                 "Shizuku is installed but its service is off. Open Shizuku and start it over Wireless debugging."
             ShizukuState.PERMISSION_DENIED ->
                 "Shizuku is running. Grant NotCustom access so it can apply system tweaks."
             ShizukuState.READY ->
-                "Connected through Shizuku. Your tweaks are below."
+                "Connected through Shizuku. Animation access is granted, so it keeps working after Shizuku stops."
         }
         Text(body, style = MaterialTheme.typography.bodySmall, color = Muted)
         if (shizuku == ShizukuState.READY) return@StepCard
@@ -470,6 +602,19 @@ private fun SetupCard(
             color = Muted.copy(alpha = 0.7f)
         )
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Locked(text: String, buttons: @Composable () -> Unit) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = Muted)
+    Spacer(Modifier.height(12.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { buttons() }
+}
+
+private fun openSettings(context: Context, intent: Intent) {
+    runCatching { context.startActivity(intent) }
+        .onFailure { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
 }
 
 @Composable

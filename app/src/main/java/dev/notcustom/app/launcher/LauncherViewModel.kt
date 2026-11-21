@@ -30,6 +30,7 @@ import androidx.lifecycle.viewModelScope
 import dev.notcustom.app.core.Shell
 import dev.notcustom.app.core.ShizukuManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -163,14 +164,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun reload() {
         viewModelScope.launch {
-            val apps = withContext(Dispatchers.IO) { loadApps() }
-            val shortcuts = withContext(Dispatchers.IO) { loadPinnedShortcuts() }
-            val iconPacks = withContext(Dispatchers.IO) { icons.availablePacks() }
+            val appsJob = async(Dispatchers.IO) { loadApps() }
+            val shortcutsJob = async(Dispatchers.IO) { loadPinnedShortcuts() }
+            val iconPacksJob = async(Dispatchers.IO) { icons.availablePacks() }
+            val apps = appsJob.await()
+            val shortcuts = shortcutsJob.await()
+            val iconPacks = iconPacksJob.await()
             val iconPack = prefs.iconPack?.takeIf { selected ->
                 iconPacks.any { it.packageName == selected }
             }
             prefs.iconPack = iconPack
             icons.setSelectedPack(iconPack)
+            icons.setThemed(prefs.themedIcons)
             val widgets = loadWidgets()
             val widgetSizes = syncWidgetSizes(widgets, prefs.columns)
             val widgetPlacements = syncWidgetPlacements(widgets, widgetSizes, prefs.columns, prefs.pinPositions)
@@ -223,7 +228,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 val byComponent = primaryByComponent(apps)
                 val preload = ((unifiedPinned).mapNotNull { byComponent[it] } + apps)
                     .distinctBy { it.key }
-                viewModelScope.launch { preload.forEach { icons.load(it) } }
+                preload.forEach { viewModelScope.launch { icons.load(it) } }
                 pendingPinRequest?.let { pending ->
                     pendingPinRequest = null
                     handlePinRequest(pending)
@@ -1429,6 +1434,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         refreshConfig()
     }
 
+    fun setShowEvents(value: Boolean) {
+        prefs.showEvents = value
+        refreshConfig()
+    }
+
     fun setUse24HourClock(value: Boolean) {
         prefs.use24HourClock = value
         refreshConfig()
@@ -1437,6 +1447,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun setAtAGlanceStyle(value: AtAGlanceStyle) {
         prefs.atAGlanceStyle = value
         refreshConfig()
+    }
+
+    fun setThemedIcons(value: Boolean) {
+        prefs.themedIcons = value
+        icons.setThemed(value)
+        _state.update { it.copy(config = prefs.config(), iconRevision = it.iconRevision + 1) }
     }
 
     fun setMonochrome(value: Boolean) {
@@ -1460,7 +1476,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val byComponent = primaryByComponent(apps)
         val preload = ((_state.value.pinned + _state.value.dock).mapNotNull { byComponent[it] } + apps)
             .distinctBy { it.key }
-        viewModelScope.launch { preload.forEach { icons.load(it) } }
+        preload.forEach { viewModelScope.launch { icons.load(it) } }
     }
 
     fun startWidgets() {
@@ -1830,6 +1846,32 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         prefs.widgetPlacements = emptyMap()
         _state.update {
             it.copy(widgets = emptyList(), widgetSizes = emptyMap(), widgetPlacements = emptyMap())
+        }
+    }
+
+    fun exportLayout(uri: android.net.Uri) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    getApplication<Application>().contentResolver.openOutputStream(uri, "wt")!!
+                        .bufferedWriter().use { it.write(prefs.exportLayout()) }
+                }.isSuccess
+            }
+            showMessage(if (ok) "Layout backed up" else "Couldn't save the backup")
+        }
+    }
+
+    fun importLayout(uri: android.net.Uri) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val raw = getApplication<Application>().contentResolver.openInputStream(uri)!!
+                        .bufferedReader().use { it.readText() }
+                    prefs.importLayout(raw)
+                }.isSuccess
+            }
+            if (ok) reload()
+            showMessage(if (ok) "Layout restored" else "Not a NotCustom backup")
         }
     }
 
@@ -2209,6 +2251,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             runCatching {
                 launcherApps.getActivityList(null, user).forEach { info ->
                     val component = info.componentName ?: return@forEach
+                    // NotCustom itself is reached from Home settings, not as an app icon.
+                    if (component.packageName == context.packageName) return@forEach
                     val label = info.label?.toString()?.takeIf { it.isNotBlank() }
                         ?: component.packageName
                     val cached = categoryCache[component.packageName]
@@ -2232,7 +2276,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         user = user,
                         category = category,
                         system = system
-                    )
+                    ).also { icons.remember(it.key, info) }
                 }
             }
         }

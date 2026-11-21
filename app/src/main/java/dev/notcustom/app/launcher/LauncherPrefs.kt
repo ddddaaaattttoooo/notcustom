@@ -44,6 +44,14 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getBoolean("monochrome", false)
         set(value) = prefs.edit().putBoolean("monochrome", value).apply()
 
+    var themedIcons: Boolean
+        get() = prefs.getBoolean("themed_icons", false)
+        set(value) = prefs.edit().putBoolean("themed_icons", value).apply()
+
+    var showEvents: Boolean
+        get() = prefs.getBoolean("show_events", false)
+        set(value) = prefs.edit().putBoolean("show_events", value).apply()
+
     var drawerMode: DrawerMode
         get() = runCatching {
             DrawerMode.valueOf(prefs.getString("drawer_mode", null) ?: DrawerMode.GRID.name)
@@ -195,8 +203,47 @@ class LauncherPrefs(context: Context) {
         showSearch = showSearch,
         use24HourClock = use24HourClock,
         atAGlanceStyle = atAGlanceStyle,
-        monochrome = monochrome
+        monochrome = monochrome,
+        themedIcons = themedIcons,
+        showEvents = showEvents
     )
+
+    /** Home layout and settings as JSON. Widgets are left out: their ids only exist in this install. */
+    fun exportLayout(): String {
+        val values = JSONObject()
+        BACKUP_KEYS.keys.forEach { key ->
+            when (val value = prefs.all[key]) {
+                null -> Unit
+                is Set<*> -> values.put(key, JSONArray(value.toList()))
+                else -> values.put(key, value)
+            }
+        }
+        return JSONObject().put("notcustom_backup", 1).put("prefs", values).toString(2)
+    }
+
+    /** Replaces layout and settings with a backup. Throws if the file isn't a NotCustom backup. */
+    fun importLayout(raw: String) {
+        val values = JSONObject(raw).getJSONObject("prefs")
+        val edit = prefs.edit()
+        var written = 0
+        BACKUP_KEYS.forEach { (key, type) ->
+            edit.remove(key)
+            if (!values.has(key)) return@forEach
+            // Only a value of the expected type is written, so a bad file can't crash Home on read.
+            when (type) {
+                Boolean::class -> (values.get(key) as? Boolean)?.let { edit.putBoolean(key, it) }
+                Int::class -> (values.get(key) as? Int)?.let { edit.putInt(key, it) }
+                String::class -> (values.get(key) as? String)?.let { edit.putString(key, it) }
+                Set::class -> (values.get(key) as? JSONArray)?.let { array ->
+                    edit.putStringSet(key, (0 until array.length()).map { array.optString(it) }.toSet())
+                }
+                else -> null
+            }?.let { written++ }
+        }
+        // Nothing usable: keep the current layout instead of wiping it.
+        require(written > 0) { "No layout in backup" }
+        edit.putBoolean("initialized", true).commit()
+    }
 
     fun clearLayout() {
         prefs.edit()
@@ -335,5 +382,17 @@ class LauncherPrefs(context: Context) {
             }
         }
         return result
+    }
+
+    private companion object {
+        val BACKUP_KEYS = mapOf(
+            "columns" to Int::class, "icon_size" to Int::class, "page_count" to Int::class,
+            "current_page" to Int::class, "labels" to Boolean::class, "search" to Boolean::class,
+            "clock_24_hour" to Boolean::class, "monochrome" to Boolean::class,
+            "themed_icons" to Boolean::class, "show_events" to Boolean::class,
+            "at_a_glance_style" to String::class, "drawer_mode" to String::class,
+            "icon_pack" to String::class, "pinned" to String::class, "pin_positions" to String::class,
+            "dock" to String::class, "folders" to String::class, "hidden" to Set::class
+        )
     }
 }

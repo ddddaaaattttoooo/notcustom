@@ -100,6 +100,7 @@ fun AppDrawer(
         }
     }
     var openFolder by remember { mutableStateOf<String?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(state.drawerOpen) { if (!state.drawerOpen) openFolder = null }
     BackHandler(enabled = openFolder != null) { openFolder = null }
     val gridState = rememberLazyGridState()
@@ -164,7 +165,16 @@ fun AppDrawer(
                     Column {
                         Spacer(Modifier.height(12.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            SearchField(state.search, viewModel::setSearch, Modifier.weight(1f))
+                            SearchField(
+                                state.search,
+                                viewModel::setSearch,
+                                onSearch = {
+                                    // Enter opens the only matching app, otherwise searches the web.
+                                    val only = filtered.singleOrNull()
+                                    if (only != null) viewModel.launch(only) else webSearch(context, state.search.trim())
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
                             Spacer(Modifier.width(8.dp))
                             TextButton(onClick = viewModel::closeDrawer) {
                                 Text(
@@ -195,7 +205,7 @@ fun AppDrawer(
                             }
                         }
                         Spacer(Modifier.height(6.dp))
-                        Text(
+                        if (state.search.isBlank()) Text(
                             "Long-press and drag onto Home. Long-press without moving for options.",
                             style = MaterialTheme.typography.labelSmall,
                             color = Muted
@@ -203,6 +213,7 @@ fun AppDrawer(
                         Spacer(Modifier.height(10.dp))
                     }
                 }
+                if (state.search.isNotBlank()) SearchExtras(state.search)
                 if (filtered.isEmpty()) {
                     var emptyPull by remember { mutableFloatStateOf(0f) }
                     Box(
@@ -665,12 +676,19 @@ private fun smartGroups(apps: List<LauncherApp>): List<Pair<String, List<Launche
 private fun SearchField(
     value: String,
     onChange: (String) -> Unit,
+    onSearch: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     BasicTextField(
         value = value,
         onValueChange = onChange,
         singleLine = true,
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            imeAction = androidx.compose.ui.text.input.ImeAction.Search
+        ),
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+            onSearch = { if (value.isNotBlank()) onSearch() }
+        ),
         cursorBrush = SolidColor(Paper),
         textStyle = TextStyle(
             color = Paper,
@@ -696,7 +714,7 @@ private fun SearchField(
                 Box(Modifier.weight(1f)) {
                     if (value.isEmpty()) {
                         Text(
-                            "Search apps",
+                            "Search apps, settings and web",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.White.copy(alpha = 0.45f)
                         )
